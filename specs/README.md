@@ -89,12 +89,91 @@ uv run tools/spec-trace/spec_trace.py
 This is the whole payoff of working this way. Without it these files become archaeology
 within two months.
 
+## Reviewing a spec
+
+Reviewing a spec is not reviewing code. On code you hunt for bugs; on a spec you hunt for
+**ambiguity** and **silence**. A spec fails by not saying something far more often than by
+saying something false.
+
+### Read it in this order
+
+1. **Non-goals and trust boundaries.** If the adversary is named wrong, every requirement
+   below it is wrong in a way you cannot catch one requirement at a time. Cheapest place to
+   find a structural error and the only place you can find it at all.
+2. **The fixtures.** `examples/` is the spec compiled to concrete cases. They read faster
+   than the requirements, and if a fixture looks wrong the requirement behind it is wrong.
+3. **The requirements** — closely on the sections where a mistake is unrecoverable, skimming
+   elsewhere. A bad requirement in a mechanical section costs a patch release.
+
+### Four questions, in yield order
+
+- **Could two competent engineers implement this differently and both claim compliance?**
+  If yes, it is underspecified. Highest-yield question by a distance.
+- **Can I write the `*Accept:*` test today without inventing anything the spec didn't
+  decide?** If the criterion needs you to pick a value, a threshold or a format, it is not an
+  acceptance criterion.
+- **What happens on the path this doesn't describe?** Restart, concurrency, partial failure,
+  empty input, the second time.
+- **If I am the adversary named in §3, which requirement do I attack?** One dedicated pass
+  with only this question. Look for fields the component trusts, gaps between check and
+  dispatch, and anything the adversary can cause to be echoed back to itself.
+
+### `MUST` vs `SHOULD`
+
+Every `SHOULD` is a thing that will not happen. If you would be angry when it doesn't,
+promote it to `MUST`. If you wouldn't, delete it — an unenforced `SHOULD` is decoration that
+makes a spec look more rigorous than it is.
+
+### Reviewing agent-authored specs
+
+Most drafts here are written by an agent. Volume is not evidence of correctness and fluent
+prose is not evidence of thought. Two failure modes to hunt specifically:
+
+- **Restatement.** Two requirements saying the same thing in different words. Inflates the
+  count, adds no constraint.
+- **Requirements that constrain nothing.** They sound normative but rule no implementation
+  out. Ask of any requirement: *what does this forbid?* If the answer is "nothing", cut it.
+
+A spec that comes back shorter is a successful review.
+
+### Last
+
+Check every requirement against `CLAUDE.md`. A requirement that quietly contradicts a settled
+decision is how settled ground gets re-opened by accident.
+
 ## Lifecycle
 
-- `draft` — being written or argued about. No implementation should depend on it.
-- `accepted` — frozen enough to build against. Changes bump the version and get a changelog
-  entry at the bottom of `spec.md`.
-- `implemented` — every `MUST` has a passing test carrying its ID.
+```
+draft ──review──▶ accepted ──implement──▶ implemented
+```
 
-Changing an `accepted` requirement's meaning means a **new ID**, with the old one marked
-`withdrawn in vN`. Never silently redefine an ID that a test or a commit message points at.
+- `draft` — being written or argued about. No implementation should depend on it.
+  `spec-trace` reports but does not fail.
+- `accepted` — frozen enough to build against. Tagged `spec/NNNN-vMAJOR.MINOR.PATCH`.
+  `spec-trace` **ratchets**: coverage is recorded in a checked-in baseline and CI fails only
+  when it decreases. This avoids a build that is red for weeks and therefore ignored, while
+  still making a lost test a hard failure.
+- `implemented` — every `MUST` has a passing test carrying its ID. `spec-trace` fails on any
+  gap.
+
+A spec cannot reach `accepted` with an unresolved **blocking** open question. Non-blocking
+ones move to the changelog as explicitly deferred, so they are a decision rather than an
+oversight.
+
+Version bumps: clarification → patch, new requirement → minor, changed or withdrawn meaning
+→ major. Changing an `accepted` requirement's meaning means a **new ID**, with the old one
+marked `withdrawn in vN`. Never silently redefine an ID that a test or a commit message
+points at.
+
+## Process
+
+- **One spec in draft at a time.** Two open drafts means neither gets the adversary pass.
+- **Review happens in a pull request**, even solo. Not for ceremony: the review thread is the
+  only durable record of *why* a requirement is shaped the way it is, and this is a public
+  repo where that history is the difference between a contributor understanding the design
+  and re-litigating it.
+- **Implementation is tests-first, named by ID** — `TestPRX_R_012_UnknownActionsFailClosed`.
+  Not a style preference: the test suite *is* the conformance suite, and the naming is what
+  makes `spec-trace` work at all.
+- **Keep specs small enough to actually review.** Around 30 requirements is the ceiling. Past
+  that, review degrades into a rubber stamp, and a rubber stamp is not a gate.
