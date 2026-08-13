@@ -19,7 +19,7 @@ person chats with intake agent
 
 | | |
 |---|---|
-| Design rationale, narrative | [design note](https://claude.ai/code/artifact/9953c5cd-cb3c-4c89-aa4b-672c7e36f5bd) |
+| Design rationale, narrative | [`docs/design-note.md`](docs/design-note.md) |
 | Normative behaviour | [`specs/`](specs/) — start with [`specs/README.md`](specs/README.md) |
 | What gets specified, in what order | [`specs/ROADMAP.md`](specs/ROADMAP.md) |
 | First spec | [`specs/0001-proxy-protocol/`](specs/0001-proxy-protocol/spec.md) |

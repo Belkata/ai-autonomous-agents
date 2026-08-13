@@ -10,12 +10,18 @@ Two goals, in order: something useful internally at the user's company, then an
 open-source project. The user is a platform engineer. Target environment is
 multi-cloud (Azure + AWS), Kubernetes, Microsoft Teams as the human interface.
 
-**Full design doc (kept current, same URL on republish):**
-https://claude.ai/code/artifact/9953c5cd-cb3c-4c89-aa4b-672c7e36f5bd
+**Full design doc — canonical copy is in the repo:** [`docs/design-note.md`](docs/design-note.md).
 
-Source file for that artifact lives in the session scratchpad, not in this repo. If it
-needs editing from a new session, fetch the URL with WebFetch to read it, then publish
+The published artifact at
+https://claude.ai/code/artifact/9953c5cd-cb3c-4c89-aa4b-672c7e36f5bd is a *rendered view* of
+that file, and it is **private** — external contributors cannot open it, so never link to it
+as the primary reference. Edit the markdown first; if the artifact needs to match, republish
 with `url:` set to that address so it updates in place instead of minting a new one.
+
+Three artifacts, three jobs, and they must not drift into each other: `specs/` is normative
+behaviour, `docs/design-note.md` is the rationale, this file is the settled decisions and the
+working context. Where the note and a spec disagree, the spec wins and the note needs an
+update.
 
 ## The flow
 

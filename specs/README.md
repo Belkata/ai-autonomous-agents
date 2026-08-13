@@ -5,12 +5,13 @@ and which one is a decision someone has to make deliberately.
 
 ## Two artifacts, two jobs
 
-| | Design doc (published artifact) | Specs (this directory) |
+| | [Design note](../docs/design-note.md) | Specs (this directory) |
 |---|---|---|
 | Answers | *why* it is this way | *what* it does, observably |
 | Audience | someone deciding whether the design is sound | someone implementing or reviewing a component |
-| Lives | one stable URL, narrative prose | git, versioned alongside the code |
+| Form | narrative prose, an argument | requirements with IDs, schemas, fixtures |
 | Changes | when a decision changes | when behaviour changes |
+| Authority | none — it loses to a spec | normative |
 
 Specs **link to** rationale; they do not restate it. When writing a spec forces a decision
 to change, update `CLAUDE.md` and the design doc in the same commit — a spec that quietly
