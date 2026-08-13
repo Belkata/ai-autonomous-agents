@@ -42,3 +42,7 @@ return a secret — and puts a rendered diff in front of a human instead of a co
 
 **Not a system where a denial ends the run.** A refusal is a structured message that becomes
 a request to a human, and the run resumes where it stopped, hours later.
+
+## Licence
+
+Apache-2.0. See [`LICENSE`](LICENSE).
