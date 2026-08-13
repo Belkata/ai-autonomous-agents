@@ -154,8 +154,9 @@ works; `runtimeClassName` is a one-line change later), `k3s` (using k3d), `ollam
 if local inference is wanted), `terraform` (using OpenTofu), SPIRE (belongs in-cluster via
 Helm, not on the host).
 
-**Not yet done:** no k3d cluster created, no git repo initialised here, `git config --global
-user.name/user.email` are **unset**.
+**Not yet done:** no k3d cluster created. Git repo **is** initialised here (branch `main`),
+with a **repo-local** identity `Belkata <belkata.okfo@gmail.com>` — `git config --global
+user.name/user.email` are still unset by design. No remote yet.
 
 ## Free-tier notes
 
@@ -167,20 +168,44 @@ tenant or build against the local approval adapter first. LocalStack for AWS sha
 reads, resource-group/tag ops and `what-if` are free. Route all model calls through LiteLLM so
 the model is config and free tiers can rotate.
 
+## How we work: spec-driven
+
+Specs are normative behaviour and live in `specs/`, versioned with the code. The design doc
+artifact stays the *rationale* record. Specs link to rationale, never restate it. The method
+is in `specs/README.md` and is itself normative — read it before writing or editing a spec.
+
+The rule that makes it real: every `MUST` has a stable ID, every ID needs a test whose name
+contains it, and `tools/spec-trace/spec_trace.py` fails CI when one doesn't. Draft specs are
+advisory; `accepted` and `implemented` ones are enforced.
+
+Spec one or two ahead of the code, never the whole system. Sequence and dependency edges are
+in `specs/ROADMAP.md`.
+
+## Settled since: language and first deliverable
+
+**Language: Go for the controller and proxies, Python for the LangGraph intake agent.**
+Confirmed. Go matches kubebuilder and the ecosystem being depended on.
+
+**First spec is `0001-proxy-protocol`, not the CI hygiene scan.** The scan is the OSS wedge
+and the fastest thing to ship, which is exactly why it doesn't need to be first — it has no
+edges into anything else, so building it later invalidates nothing. The proxy protocol is
+where every other component meets, so getting it wrong is a rewrite of all of them.
+
 ## Next steps
 
-Not yet decided: implementation language. Recommendation is Go for the controller and proxies
-(kubebuilder, and it matches the ecosystem being depended on) with Python for the LangGraph
-intake agent — but confirm with the user before scaffolding.
+`specs/0001-proxy-protocol` is drafted — 37 requirements, JSON Schema, 12 golden fixtures.
+Open before it can move to `accepted`: the six questions in its `open-questions.md`, of which
+**Q1 (resolvable-field allowlist) blocks `0003`** because it changes the classifier entry
+shape.
 
-Two candidate first deliverables, both discussed:
-1. **CI hygiene scan** — smallest, standalone, immediately useful, and the OSS wedge.
-2. **Proxy request/approval protocol** — frozen request, handle resolution, structured
-   refusal. Everything else depends on it, so it's the higher-leverage start.
+Then: `0002` (Warrant/GlobalPolicy objects) alongside `0003` (classifier), since the
+classifier needs the ring and never-list shaped. `0004` can be stubbed — refuse terminally,
+no escalation — until the loop runs end to end.
 
 Zero-spend milestone to aim at: local approval adapter → GitHub Issue → OpenHands in a
 sandbox on k3d → fork PR on a public repo → free Actions CI → scratch namespace it can break
-freely → approval card → merge.
+freely → approval card → merge. Shortest spec path to a running loop is
+**0001 → 0003 → 0005 → 0007**.
 
 ## Working with this user
 
