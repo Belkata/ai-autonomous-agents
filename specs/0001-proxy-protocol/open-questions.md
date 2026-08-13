@@ -10,8 +10,9 @@ value back out of the resource you just created. But it means the classifier tab
 carries per-action field paths, not just three booleans, and every action that legitimately
 accepts a secret has to be enumerated before an agent can use one there.
 
-The failure mode is quiet: an agent hits `unresolvable_handle` on a field that *should* have
-been resolvable, and the run stalls on a table gap rather than a policy decision.
+The failure mode is quiet: an agent hits `handle_denied` on a field that *should* have been
+resolvable, and the run stalls on a table gap rather than a policy decision. `PRX-R-056`
+widens the exposure — the read path now depends on the same table.
 
 **Settles it:** run the first ten real tasks and count how often resolution is refused for
 a missing table entry versus a genuine exfiltration attempt. If the ratio is bad, the
@@ -20,17 +21,16 @@ rather than per-action field paths — coarser, still closes the tag case.
 
 **Blocks:** `0003` (classifier entry shape). Decide before the table format freezes.
 
-## Q2 — Is `error` distinguishable enough from `refused` in practice?
+## ~~Q2 — Is `error` distinguishable enough from `refused` in practice?~~ — resolved in v0.2.0
 
-`PRX-R-021` says they must never be conflated, but there is a third thing: allowed,
-attempted, and failed *because* of a permission the proxy itself lacks. That is an operator
-bug — the proxy's own credential is under-scoped — and it currently surfaces as
-`error / upstream_status: 403`, which is exactly the shape the agent must not treat as a
-policy statement.
+Resolved by `PRX-R-023`: `error` carries a `class` of `upstream`, `client` or `proxy`, chosen
+so that each maps to a different correct response from the agent. An upstream 403 — the
+proxy's own credential being under-scoped — is `class: proxy`, not retryable, and pages an
+operator. Fixture: `examples/decision-error-proxy-underscoped.json`.
 
-**Settles it:** either a fourth-and-a-half code (`error / proxy_misconfigured`, retryable
-false, paging an operator) or a rule that upstream 403s are always operator alerts. Leaning
-toward the former.
+The review that shrank the refusal enum made this necessary rather than optional: once
+malformed requests and classifier outages became errors rather than refusals, `retryable`
+alone could no longer tell the agent whether to fix its request, back off, or stop.
 
 ## Q3 — RFC 8785 implementation in Go
 
@@ -74,3 +74,25 @@ mid-run is the only option that actually stops an exfiltration in progress, and 
 only one that can wreck a legitimate run at minute 40 of 45.
 
 **Settles it:** `0004`, once pause/resume is real. Until then, notify.
+
+## Q7 — Should `out_of_ring` be a refusal at all, or a `pending`?
+
+Raised by the v0.2.0 review. After the enum shrank, `out_of_ring` is the one remaining
+refusal that is *escalatable* — and escalation is shaped almost identically to a gated
+mutation: file a request, park the run, resume when a human answers. The only real difference
+is what happens on approval. A `pending` executes the frozen request itself; an escalation
+revises the Warrant and the agent retries.
+
+**Argument for merging:** two protocol outcomes for one interaction shape is surface the
+agent has to learn twice, and `0004` has to model the wait once anyway.
+
+**Argument for keeping them apart:** the required agent behaviour differs. Never retry a
+`pending` — the proxy will execute it. *Do* retry after an escalation resumes. Getting that
+backwards means either a duplicated mutation or a stalled run.
+
+**Settles it:** whether the difference can live in a field (`pending.kind: approval |
+escalation`) without agents getting it wrong. That is really a question about `0004`'s
+resume semantics, so it should be decided there and back-ported here rather than guessed now.
+
+**Blocks:** nothing yet. `0001` can be accepted with `out_of_ring` as a refusal and changed
+in a minor version if `0004` argues otherwise.

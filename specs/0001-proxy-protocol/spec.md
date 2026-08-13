@@ -1,6 +1,6 @@
 # 0001 — Proxy protocol
 
-**Status:** draft · v0.1.0
+**Status:** draft · v0.2.0
 **Prefix:** `PRX`
 **Rationale:** design doc §03 (where credentials live), §06 (three exits), §07 (policy in practice).
 Settled decisions this spec implements are recorded in `CLAUDE.md` — do not re-litigate them here.
@@ -65,20 +65,20 @@ The proxy MUST derive the governing `Warrant` and `GlobalPolicy` from the authen
 identity. A `warrant`, `policy`, `run_id` or equivalent field in the request body MUST be
 rejected as malformed rather than honoured or ignored.
 
-*Accept:* a request containing `"warrant": "some-other-warrant"` returns `refused` with
-`reason_code: malformed`; the audit record shows the identity-derived Warrant.
+*Accept:* a request containing `"warrant": "some-other-warrant"` returns
+`error / class: client`; the audit record shows the identity-derived Warrant.
 
 > An ignored field is worse than a rejected one: it silently teaches the agent that the field
 > exists and might work somewhere else.
 
-#### PRX-R-003 — Expired Warrants stop serving
+#### PRX-R-003 — Dead Warrants stop serving
 
-Once a Warrant's TTL has elapsed, or its budget is exhausted, the proxy MUST refuse all
-requests bound to it with `reason_code: warrant_expired` or `budget_exhausted`. This applies
-to in-flight `pending` requests: they MUST NOT execute on later approval.
+Once a Warrant's TTL has elapsed or its budget is exhausted, the proxy MUST refuse all
+requests bound to it with `reason_code: warrant_dead`, carrying which of the two conditions
+fired. This applies to in-flight `pending` requests: they MUST NOT execute on later approval.
 
 *Accept:* a `pending` request approved after its Warrant's TTL returns
-`refused / warrant_expired` and never reaches upstream.
+`refused / warrant_dead` and never reaches upstream.
 
 #### PRX-R-004 — Warrant revision is pinned per decision
 
@@ -99,7 +99,7 @@ raw upstream URL for the proxy to forward blindly.
 Schema: [`schema/request.schema.json`](schema/request.schema.json).
 
 *Accept:* `examples/request-executed.json` validates; a request with an `authorization`
-field fails schema validation and returns `refused / malformed`.
+field fails schema validation and returns `error / class: client`.
 
 #### PRX-R-011 — Classification ignores the HTTP verb
 
@@ -129,7 +129,7 @@ decision and, for `executed`, MUST NOT perform the upstream call twice.
 #### PRX-R-014 — Request size and depth are bounded
 
 The proxy MUST enforce a maximum request body size and a maximum `parameters` nesting depth,
-and MUST reject violations with `reason_code: malformed` before parsing further.
+and MUST reject violations with `error / class: client` before parsing further.
 
 *Accept:* a 100 MB body and a 500-deep nested object are both refused without the proxy
 allocating proportionally.
@@ -151,12 +151,12 @@ Every request that gets past TLS MUST produce exactly one of:
 
 #### PRX-R-021 — `error` is never conflated with `refused`
 
-An upstream failure, timeout, or proxy-internal fault MUST return `decision: error` with an
-`upstream_status` where one exists and a `retryable` boolean. It MUST NOT be reported as
-`refused`, and a policy denial MUST NOT be reported as `error`.
+`refused` is a policy statement: the proxy will not do this. `error` is everything else that
+prevented the call. A policy denial MUST NOT be reported as `error`, and a fault MUST NOT be
+reported as `refused`.
 
-*Accept:* an upstream 500 yields `error / retryable: true`; a never-list match yields
-`refused`; no input produces both semantics under one code.
+*Accept:* an upstream 500 yields `error`; a never-list match yields `refused`; no input
+produces both semantics under one code.
 
 > The agent must be able to distinguish "you may not" from "it broke". Conflate them and it
 > will retry a denial forever, or give up on a transient fault.
@@ -169,28 +169,59 @@ request (`pending` → approval → `executed`), and present in the audit record
 *Accept:* the `correlation_id` returned with `pending` equals the one on the eventual
 `executed` decision.
 
+#### PRX-R-023 — Errors carry a class, because the right response differs
+
+`error` MUST carry `class`, one of:
+
+| `class` | Meaning | What the agent should do |
+|---|---|---|
+| `upstream` | The provider failed or throttled. | Honour `retryable` and `retry_after_seconds`. |
+| `client` | The request was malformed, oversized, or carried a forbidden field. | Fix the request. Retrying it unchanged will fail identically. |
+| `proxy` | The proxy or a dependency it needs is broken or misconfigured. | Stop. Not the agent's to fix; this pages an operator. |
+
+`retryable` MUST be `false` for every `class: client` error.
+
+*Accept:* a 100 MB body yields `client`; ARM returning 503 yields `upstream`; the classifier
+being unreachable yields `proxy`; an upstream 403 — meaning the *proxy's* own credential is
+under-scoped — yields `proxy` and raises an operator alert, never `refused`.
+
+> This is the resolution of open question Q2. An upstream 403 looks like a permission
+> statement and is nothing of the kind: it means the proxy is misconfigured, and telling the
+> agent "you may not" would send it off to find another route to a call it was allowed to
+> make.
+
 ### 4.4 Refusal structure
 
-#### PRX-R-030 — Refusals are structured, always
+#### PRX-R-030 — Every outcome is a structured decision object
 
-A refusal MUST be a well-formed decision object containing `reason_code`, human- and
-model-readable `reason` prose, `subject` (what specifically was refused), and an `escalation`
-object. A bare HTTP status, an empty body, or an HTML error page MUST NOT occur — including
-for malformed input and for requests rejected before policy evaluation.
+A refusal MUST carry `reason_code`, human- and model-readable `reason` prose, `subject` (what
+specifically was refused), and an `escalation` object. More broadly, no path may return a
+bare HTTP status, an empty body, or an HTML error page — including malformed input and
+requests rejected before policy evaluation, which are `error / class: client`.
 
-*Accept:* every path that produces a refusal is covered by a fixture in `examples/` that
-validates against `schema/decision.schema.json`.
+*Accept:* every path that produces a refusal or an error is covered by a fixture in
+`examples/` that validates against `schema/decision.schema.json`.
 
 > This is the single most important interface in the design. A bare 403 gives the model
 > nothing to reason about and it will route around you.
 
 #### PRX-R-031 — `reason_code` is a closed enum
 
-`reason_code` MUST be one of: `out_of_ring`, `never_listed`, `sensitive_read`,
-`unresolvable_handle`, `budget_exhausted`, `warrant_expired`, `rate_limited`,
-`unclassified_action`, `stale_approval`, `malformed`. Adding a value is a spec version bump.
+`reason_code` MUST be one of exactly four values. Adding one is a spec version bump.
 
-*Accept:* the schema enumerates exactly these; an unknown code fails validation in CI.
+| `reason_code` | Escalatable | Meaning |
+|---|---|---|
+| `never_listed` | never | IAM, prod. A hard boundary; no approval within this Warrant can reach it. |
+| `out_of_ring` | yes | Outside the ring. Needs a Warrant revision, not an approval. |
+| `handle_denied` | no | A secret handle names something outside the ring, or a field that would expose the value. |
+| `warrant_dead` | no | TTL elapsed or budget exhausted. Carries which. |
+
+*Accept:* the schema enumerates exactly these four; an unknown code fails validation in CI.
+
+> This enum was ten values in v0.1.0. Six of them were not policy statements: faults and
+> client errors moved to `error` (`PRX-R-023`), the sensitive-read case became a transform
+> rather than a denial (`PRX-R-055`), and two Warrant-death conditions merged. What is left
+> is only the cases where the correct answer really is "the proxy will not do this."
 
 #### PRX-R-032 — Refusals say what would make it work, when that is safe
 
@@ -198,7 +229,7 @@ validates against `schema/decision.schema.json`.
 an alternative exists (use the scratch ring; open a PR instead; request a handle).
 For `out_of_ring` and `never_listed` it MUST NOT enumerate the ring or the never-list.
 
-*Accept:* a `sensitive_read` refusal for a Key Vault secret names the handle syntax; an
+*Accept:* a `never_listed` refusal for a role assignment names the IaC-PR route; an
 `out_of_ring` refusal names neither other subscriptions nor other clusters.
 
 #### PRX-R-033 — Refusals do not leak beyond the request
@@ -259,7 +290,7 @@ On approval, the proxy MUST execute the object it persisted. It MUST NOT accept 
 body at approval time, MUST NOT re-derive the upstream call from anything the agent supplies
 after freezing, and MUST re-verify `frozen_hash` immediately before dispatch.
 
-*Accept:* an approval carrying a modified request body is refused as `malformed`; the
+*Accept:* an approval carrying a modified request body is rejected as `client`; the
 executed upstream call byte-matches the persisted object.
 
 #### PRX-R-043 — No approval token ever reaches the agent
@@ -272,11 +303,15 @@ that executes on agent presentation of any credential.
 
 #### PRX-R-044 — Approval binds to (frozen_hash, warrant_revision)
 
-An approval MUST reference both, and MUST be rejected as `stale_approval` if the Warrant has
-been revised since freeze, or if the hash does not match.
+An approval MUST reference both, and MUST be rejected if the Warrant has been revised since
+freeze or the hash does not match. That rejection is returned to the **approval channel**,
+not to the agent — it is not an agent-facing decision code. The agent's request stays
+`pending`, re-evaluated under the new revision, and either resolves without a human or
+requires a fresh approval.
 
-*Accept:* approving after a Warrant revision returns `refused / stale_approval`; the request
-must be re-frozen and re-approved.
+*Accept:* approving after a Warrant revision returns a rejection to the channel and no
+upstream call; polling `request_id` still returns `pending`, never a refusal the agent has
+no way to act on.
 
 #### PRX-R-045 — Approvals are single-use
 
@@ -326,7 +361,7 @@ a redaction test asserts this over the whole response corpus.
 #### PRX-R-052 — Handles resolve only in declared fields
 
 Resolution MUST be permitted only in `parameters` fields the action's classifier entry marks
-resolvable. A handle anywhere else MUST refuse with `unresolvable_handle`.
+resolvable. A handle anywhere else MUST refuse with `handle_denied`.
 
 *Accept:* a handle in a resource *tag* value is refused; a handle in a Secret's `data` field
 resolves.
@@ -335,21 +370,60 @@ resolves.
 > can later be read back, and reads the value out of the resource it just created. The
 > field allowlist is the control; see `open-questions.md` for what it costs.
 
-#### PRX-R-053 — Unresolvable handles refuse, never pass through
+#### PRX-R-053 — Unresolvable handles stop the call, never pass through
 
-If a handle cannot be resolved — unknown broker, path outside the ring, policy denial,
-malformed — the proxy MUST refuse. It MUST NOT forward the literal handle text upstream.
+If a handle cannot be resolved, the proxy MUST NOT forward the literal handle text upstream.
+Which outcome it returns depends on why:
 
-*Accept:* a handle for an out-of-ring vault returns `refused / unresolvable_handle`; the
-upstream log shows no call.
+- **Policy** — path outside the ring, unknown broker, a field that would expose the value:
+  `refused / handle_denied`.
+- **Syntax** — the handle does not match the grammar in `PRX-R-050`:
+  `error / class: client`.
+- **Broker unavailable** — `error / class: proxy`.
+
+*Accept:* a handle for an out-of-ring vault returns `refused / handle_denied`; a malformed
+handle returns `error / class: client`; neither produces an upstream call.
 
 #### PRX-R-054 — Masking is a backstop and is logged
 
-Entropy- and pattern-based masking applies to read results outside the known-sensitive set.
-Every mask emitted MUST be logged as an observation, because a mask usually means the ring
-or the deny-list is wrong.
+Entropy- and pattern-based masking applies only to read results outside the known-sensitive
+set — the long tail that `PRX-R-055` cannot enumerate. Every mask emitted MUST be logged as
+an observation, because a mask usually means the ring or the sensitive-field table is wrong.
 
 *Accept:* a masked read produces exactly one mask observation carrying the action and target.
+
+#### PRX-R-055 — Sensitive reads return handles, not refusals
+
+A read of a known-sensitive resource MUST NOT be refused. The proxy MUST perform the read and
+return the resource with every secret-valued field replaced by a handle that resolves to that
+value, leaving structure and non-secret fields intact. The decision is `executed`, carrying
+`handles_substituted` as a count.
+
+*Accept:* `k8s:core/v1/secrets/read` on `checkout/checkout-db` returns
+`{"data": {"username": "checkout_app", "password": "{{secret:k8s:checkout/checkout-db#password}}"}}`
+— key names visible, no value anywhere in the response, audit record, or log.
+
+> This replaces the v0.1.0 behaviour of refusing the read outright, which was strictly worse.
+> A refusal tells the agent nothing about the shape of what exists, so it cannot tell a secret
+> it must not read from one that is simply absent, and it cannot discover that the wiring it
+> was asked to create is already there. Substitution gives it everything it legitimately needs
+> — which keys exist, what is already connected — and still never yields a value. The same
+> argument applies to `tfstate`, where the structure is the point and the secrets are
+> incidental.
+>
+> The security property is unchanged, because it never rested on refusal: it rests on the
+> proxy holding the credential and resolving handles outbound only (`PRX-R-051`), into fields
+> that cannot echo them back (`PRX-R-052`).
+
+#### PRX-R-056 — Substitution is driven by a table, and unknown shapes fail closed
+
+Which fields of which resources are secret-valued MUST come from a versioned table, not from
+inspection of the value. Where the proxy holds a known-sensitive action but no field entry
+for the shape returned, it MUST fall back to refusing the read with `handle_denied` rather
+than returning an unsubstituted body.
+
+*Accept:* a Key Vault response shape absent from the table returns `refused / handle_denied`;
+no response body reaches the agent.
 
 ### 4.7 Audit
 
@@ -410,16 +484,30 @@ demonstrates. Fixtures are part of the spec: changing one is a spec change.
 
 | Failure | Behaviour |
 |---|---|
-| Classifier unavailable | Refuse everything mutating with `unclassified_action`; reads inside the ring continue. Fail closed on the dangerous axis, not on the whole system. |
-| Audit sink unavailable | Stop dispatching. `PRX-R-061` makes the audit write a precondition, so the proxy degrades to refusing rather than acting unattributably. |
-| Secret broker unavailable | `unresolvable_handle`, escalatable false, retryable — this is an `error`-adjacent refusal and the fixture pins which. |
+| Classifier unavailable | `error / class: proxy` for everything mutating; reads inside the ring continue. Fail closed on the dangerous axis, not on the whole system. Not a refusal: the proxy cannot tell, which is different from saying no. |
+| Audit sink unavailable | Stop dispatching, `error / class: proxy`. `PRX-R-061` makes the audit write a precondition, so the proxy degrades to erroring rather than acting unattributably. |
+| Secret broker unavailable | `error / class: proxy`, retryable. A handle that *could* resolve but currently cannot is a fault, not a policy statement. |
+| Sensitive-field table has no entry for a returned shape | `refused / handle_denied` per `PRX-R-056`. The one place the read path still refuses. |
 | Approval channel unavailable | Requests still freeze and go `pending`; they expire normally per `PRX-R-046`. |
-| Upstream throttling | `error / retryable: true` with the upstream's retry hint, never `rate_limited` (which means *the proxy* limited it). |
+| Upstream throttling | `error / class: upstream`, retryable, with the upstream's retry hint. Proxy-side rate limiting is the same shape — the agent's response is identical, so it does not need a separate code. |
 
 ## 7. Open questions
 
 See [`open-questions.md`](open-questions.md).
 
 ## Changelog
+
+- **v0.2.0** — the refusal surface halves. `reason_code` goes from ten values to four
+  (`PRX-R-031`). Sensitive reads become handle substitution rather than denial
+  (`PRX-R-055`, `PRX-R-056`), which is the change with real behavioural weight: the agent now
+  learns the shape of what exists instead of hitting a wall. Faults and client errors move to
+  `error`, which gains a `class` (`PRX-R-023`) and thereby resolves open question Q2.
+  `stale_approval` turns out to be channel-facing and leaves the agent-facing enum entirely
+  (`PRX-R-044`). Two Warrant-death conditions merge.
+
+  Prompted by review: *"do we need a denial from the proxy? The only thing I can think of
+  that could be denied is secrets, and we can return handles."* Mostly right — the answer is
+  that denial survives for steering rather than for security, and the never-list is what
+  makes it load-bearing. See issue #1.
 
 - **v0.1.0** — initial draft.

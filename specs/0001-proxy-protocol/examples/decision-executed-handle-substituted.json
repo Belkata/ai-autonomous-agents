@@ -1,0 +1,27 @@
+{
+  "decision": "executed",
+  "correlation_id": "01JZ8Q9D2G4YQ8K6V0E3A7N3ST",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "result": {
+    "apiVersion": "v1",
+    "kind": "Secret",
+    "type": "Opaque",
+    "metadata": {
+      "name": "checkout-db",
+      "namespace": "checkout",
+      "labels": {
+        "app": "checkout-api"
+      }
+    },
+    "data": {
+      "username": "checkout_app",
+      "password": "{{secret:k8s:checkout/checkout-db#password}}",
+      "sslrootcert": "{{secret:k8s:checkout/checkout-db#sslrootcert}}"
+    }
+  },
+  "upstream_request_id": "b71c9f04-2e55-4a8d-9c31-6f0ad2e4c118",
+  "replayed": false,
+  "masked": 0,
+  "handles_substituted": 2
+}

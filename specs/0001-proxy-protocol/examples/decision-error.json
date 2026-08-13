@@ -3,6 +3,7 @@
   "correlation_id": "01JZ8QCG5K7BT1N9Y3H6D0R6VW",
   "policy_version": "platform-nonprod@7",
   "classifier_version": "actions@2026.08.1",
+  "class": "upstream",
   "upstream_status": 503,
   "retryable": true,
   "retry_after_seconds": 12,

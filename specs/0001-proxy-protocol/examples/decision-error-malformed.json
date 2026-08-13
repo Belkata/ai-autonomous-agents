@@ -1,0 +1,9 @@
+{
+  "decision": "error",
+  "correlation_id": "01JZ8QBF4J6AS0M8X2G5C9Q5UV",
+  "class": "client",
+  "upstream_status": null,
+  "retryable": false,
+  "retry_after_seconds": null,
+  "message": "Request carried a 'warrant' field. The governing Warrant is resolved from the authenticated run identity and cannot be named by the caller. Remove the field and retry; retrying unchanged will fail identically."
+}

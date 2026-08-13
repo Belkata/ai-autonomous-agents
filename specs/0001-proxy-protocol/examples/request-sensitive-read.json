@@ -1,0 +1,7 @@
+{
+  "provider": "kubernetes",
+  "action": "k8s:core/v1/secrets/read",
+  "target": "clusters/staging-eu/namespaces/checkout/secrets/checkout-db",
+  "idempotency_key": "read-secret-checkout-db-01",
+  "justification": "Find out whether the database wiring the ticket asks for already exists, and under which keys."
+}

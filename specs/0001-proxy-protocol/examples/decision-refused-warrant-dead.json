@@ -1,0 +1,15 @@
+{
+  "decision": "refused",
+  "correlation_id": "01JZ8QFK8N0EW4R2B6L9G3U9YZ",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "reason_code": "warrant_dead",
+  "cause": "ttl_elapsed",
+  "reason": "This Warrant's 4h TTL elapsed at 13:14:22Z. No further calls will be served and pending requests will not execute on approval. A new Warrant requires a new signature.",
+  "subject": "plat-2417-checkout-deploy",
+  "repeat_count": 1,
+  "escalation": {
+    "escalatable": false,
+    "why": "a dead Warrant is not widened by approval; the run is over."
+  }
+}

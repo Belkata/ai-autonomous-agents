@@ -1,0 +1,11 @@
+{
+  "decision": "error",
+  "correlation_id": "01JZ8QEJ7M9DV3Q1A5K8F2T8XY",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "class": "proxy",
+  "upstream_status": 403,
+  "retryable": false,
+  "retry_after_seconds": null,
+  "message": "The proxy's own credential was refused by ARM for an action policy allowed. This is a proxy misconfiguration, not a permission decision about this run. An operator has been paged; do not look for another route to this call."
+}

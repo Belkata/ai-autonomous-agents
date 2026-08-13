@@ -45,7 +45,6 @@ So: assemble the runtime from existing parts, and write the control plane that s
 ## 03 · Architecture: the conversation compiles into infrastructure
 
 It starts as a chat. Someone describes what they want in Teams, the ticket agent interviews them against real repo and platform context, and the conversation ends with a single signature that produces two artifacts: a Jira ticket for humans, and a Warrant for machines. The Warrant then compiles into a sandbox and a set of proxy policies.
-
 Inside that sandbox the agent may run *any* command it likes. It holds no credentials and has no network route to a cloud control plane, a cluster, or a git forge except through proxies that hold the credentials themselves and decide what to do with each request. Nothing is enforced by restricting the agent's vocabulary, and the agent's prompt is not part of the security model.
 
 ```mermaid
@@ -289,7 +288,9 @@ Then bind the approval to a **frozen request**: hash the exact request object, a
 
 ### Deny secrets, don't mask them — and return handles
 
-Masking is the wrong default for the known-sensitive set: Key Vault secrets, storage account keys, connection strings embedded in resource properties, `kubectl get secret`, terraform state. Those calls should be refused outright; regex and entropy masking is your backstop for the long tail, not your policy.
+Masking is the wrong default for the known-sensitive set: Key Vault secrets, storage account keys, connection strings embedded in resource properties, `kubectl get secret`, terraform state. Regex and entropy masking is your backstop for the long tail, not your policy.
+
+**Nor is refusal the right default, which is a correction to an earlier version of this note.** Refusing the read tells the agent nothing about the shape of what exists — it cannot tell a secret it may not read from one that is simply absent, and it cannot discover that the wiring it was asked to create is already there. Perform the read and substitute: return the resource with every secret-valued field replaced by a handle, structure and non-secret fields intact. `kubectl get secret` comes back with its key names and `{{secret:…}}` in place of each value. The agent learns everything it legitimately needs and still never sees a byte. The security property never rested on refusal; it rests on the proxy holding the credential and resolving handles outbound only, into fields that cannot echo them back. See [`specs/0001-proxy-protocol`](../specs/0001-proxy-protocol/spec.md) `PRX-R-055`.
 
 And when the agent legitimately needs a secret in order to *wire something up*, returning `****` just makes it loop trying to work out what went wrong. Return a handle instead — `{{secret:kv-prod/db-password}}` — that the proxy resolves at call time. The agent composes with it, writes it into a manifest, passes it to another tool, and never sees the value. Every mask you do emit is worth logging: it usually means the ring is wrong, not that the agent misbehaved.
 

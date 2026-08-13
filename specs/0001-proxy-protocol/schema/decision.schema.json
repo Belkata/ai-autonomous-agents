@@ -4,33 +4,57 @@
   "title": "Proxy decision",
   "description": "The proxy's answer to a request. Exactly four outcomes (PRX-R-020). Every path produces one of these, including malformed input (PRX-R-030).",
   "type": "object",
-  "required": ["decision", "correlation_id"],
+  "required": [
+    "decision",
+    "correlation_id"
+  ],
   "properties": {
     "decision": {
-      "enum": ["executed", "pending", "refused", "error"]
+      "enum": [
+        "executed",
+        "pending",
+        "refused",
+        "error"
+      ]
     },
     "correlation_id": {
       "description": "Stable across pending -> approval -> executed (PRX-R-022).",
       "type": "string",
       "minLength": 1
     },
-    "policy_version": { "type": "string" },
-    "classifier_version": { "type": "string" }
+    "policy_version": {
+      "type": "string"
+    },
+    "classifier_version": {
+      "type": "string"
+    }
   },
   "oneOf": [
-    { "$ref": "#/$defs/executed" },
-    { "$ref": "#/$defs/pending" },
-    { "$ref": "#/$defs/refused" },
-    { "$ref": "#/$defs/error" }
+    {
+      "$ref": "#/$defs/executed"
+    },
+    {
+      "$ref": "#/$defs/pending"
+    },
+    {
+      "$ref": "#/$defs/refused"
+    },
+    {
+      "$ref": "#/$defs/error"
+    }
   ],
   "$defs": {
     "executed": {
       "properties": {
-        "decision": { "const": "executed" },
-        "result": {
-          "description": "Upstream response body, after masking (PRX-R-054). Never contains a resolved handle value."
+        "decision": {
+          "const": "executed"
         },
-        "upstream_request_id": { "type": "string" },
+        "result": {
+          "description": "Upstream response body, after handle substitution (PRX-R-055) and masking (PRX-R-054). Never contains a resolved handle value."
+        },
+        "upstream_request_id": {
+          "type": "string"
+        },
         "replayed": {
           "description": "True when served from the idempotency cache (PRX-R-013).",
           "type": "boolean",
@@ -40,61 +64,101 @@
           "description": "Count of masked spans in result. Non-zero emits an observation.",
           "type": "integer",
           "minimum": 0
+        },
+        "handles_substituted": {
+          "description": "Secret-valued fields replaced by handles in result (PRX-R-055).",
+          "type": "integer",
+          "minimum": 0
         }
       },
-      "required": ["decision", "result"]
+      "required": [
+        "decision",
+        "result"
+      ]
     },
     "pending": {
       "properties": {
-        "decision": { "const": "pending" },
+        "decision": {
+          "const": "pending"
+        },
         "request_id": {
           "description": "Opaque. Confers the right to poll status only — presenting it never executes (PRX-R-043).",
           "type": "string"
         },
-        "frozen_hash": { "$ref": "#/$defs/hash" },
-        "expires_at": { "type": "string", "format": "date-time" },
+        "frozen_hash": {
+          "$ref": "#/$defs/hash"
+        },
+        "expires_at": {
+          "type": "string",
+          "format": "date-time"
+        },
         "gated_on": {
           "description": "Which classifier axes triggered the gate.",
           "type": "array",
-          "items": { "enum": ["destructive", "costsMoney", "dataActions"] },
+          "items": {
+            "enum": [
+              "destructive",
+              "costsMoney",
+              "dataActions"
+            ]
+          },
           "minItems": 1
         },
         "preview": {
           "description": "Provider dry-run diff plus cost estimate. This, not the request, is what the approver sees (design doc §07).",
           "type": "object",
           "properties": {
-            "source": { "enum": ["az-what-if", "terraform-plan", "kubectl-dry-run", "none"] },
-            "diff": { "type": "string" },
+            "source": {
+              "enum": [
+                "az-what-if",
+                "terraform-plan",
+                "kubectl-dry-run",
+                "none"
+              ]
+            },
+            "diff": {
+              "type": "string"
+            },
             "cost_estimate": {
               "type": "object",
               "properties": {
-                "monthly": { "type": "number" },
-                "currency": { "type": "string" },
-                "source": { "const": "infracost" }
+                "monthly": {
+                  "type": "number"
+                },
+                "currency": {
+                  "type": "string"
+                },
+                "source": {
+                  "const": "infracost"
+                }
               }
             }
           },
-          "required": ["source"]
+          "required": [
+            "source"
+          ]
         }
       },
-      "required": ["decision", "request_id", "frozen_hash", "expires_at", "gated_on"]
+      "required": [
+        "decision",
+        "request_id",
+        "frozen_hash",
+        "expires_at",
+        "gated_on"
+      ]
     },
     "refused": {
       "properties": {
-        "decision": { "const": "refused" },
+        "decision": {
+          "const": "refused"
+        },
         "reason_code": {
-          "description": "Closed enum. Adding a value is a spec version bump (PRX-R-031).",
+          "description": "Closed enum of four. Adding a value is a spec version bump (PRX-R-031).",
           "enum": [
-            "out_of_ring",
             "never_listed",
-            "sensitive_read",
-            "unresolvable_handle",
-            "budget_exhausted",
-            "warrant_expired",
-            "rate_limited",
-            "unclassified_action",
-            "stale_approval",
-            "malformed"
+            "out_of_ring",
+            "handle_denied",
+            "warrant_dead"
           ]
         },
         "reason": {
@@ -111,20 +175,84 @@
           "type": "integer",
           "minimum": 1
         },
-        "escalation": { "$ref": "#/$defs/escalation" }
+        "escalation": {
+          "$ref": "#/$defs/escalation"
+        },
+        "cause": {
+          "description": "For warrant_dead, which condition fired (PRX-R-003).",
+          "enum": [
+            "ttl_elapsed",
+            "budget_exhausted"
+          ]
+        }
       },
-      "required": ["decision", "reason_code", "reason", "escalation"]
+      "required": [
+        "decision",
+        "reason_code",
+        "reason",
+        "escalation"
+      ]
     },
     "error": {
       "description": "Something broke. Never a policy statement (PRX-R-021).",
       "properties": {
-        "decision": { "const": "error" },
-        "upstream_status": { "type": ["integer", "null"] },
-        "retryable": { "type": "boolean" },
-        "retry_after_seconds": { "type": ["number", "null"] },
-        "message": { "type": "string" }
+        "decision": {
+          "const": "error"
+        },
+        "class": {
+          "description": "Determines the agent's correct response (PRX-R-023). upstream: honour retryable. client: fix the request. proxy: stop, pages an operator.",
+          "enum": [
+            "upstream",
+            "client",
+            "proxy"
+          ]
+        },
+        "upstream_status": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "retry_after_seconds": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "message": {
+          "type": "string"
+        }
       },
-      "required": ["decision", "retryable", "message"]
+      "required": [
+        "decision",
+        "class",
+        "retryable",
+        "message"
+      ],
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "class": {
+                "const": "client"
+              }
+            },
+            "required": [
+              "class"
+            ]
+          },
+          "then": {
+            "properties": {
+              "retryable": {
+                "const": false
+              }
+            }
+          }
+        }
+      ]
     },
     "escalation": {
       "description": "PRX-R-036. Always present on a refusal so the agent can tell a dead end from a queue.",
@@ -133,19 +261,35 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "escalatable": { "const": false },
-            "why": { "type": "string", "minLength": 1 }
+            "escalatable": {
+              "const": false
+            },
+            "why": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "required": ["escalatable", "why"]
+          "required": [
+            "escalatable",
+            "why"
+          ]
         },
         {
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "escalatable": { "const": true },
-            "escalation_id": { "type": "string", "minLength": 1 }
+            "escalatable": {
+              "const": true
+            },
+            "escalation_id": {
+              "type": "string",
+              "minLength": 1
+            }
           },
-          "required": ["escalatable", "escalation_id"]
+          "required": [
+            "escalatable",
+            "escalation_id"
+          ]
         }
       ]
     },
