@@ -1,0 +1,21 @@
+{
+  "decision": "pending",
+  "correlation_id": "01JZ8Q7B9E2WM6H4T8C0Y5N1PQ",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "request_id": "req_01JZ8Q7B9E2WM6H4T8C0Y5N1PQ",
+  "frozen_hash": "sha256:552cb566ef10651174d13deacb8a7218a53e31ced4cea0881300373d5c034bac",
+  "expires_at": "2026-08-13T13:14:22Z",
+  "gated_on": [
+    "costsMoney"
+  ],
+  "preview": {
+    "source": "az-what-if",
+    "diff": "+ Microsoft.Compute/virtualMachines/vm-checkout-worker-01 (Standard_D4s_v5, westeurope)\n+ Microsoft.Compute/disks/vm-checkout-worker-01_OsDisk (Premium_LRS, 128 GiB)\n~ nothing modified\n- nothing deleted",
+    "cost_estimate": {
+      "monthly": 137.4,
+      "currency": "EUR",
+      "source": "infracost"
+    }
+  }
+}

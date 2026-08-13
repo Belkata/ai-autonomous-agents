@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://warrant.dev/specs/0001/request.schema.json",
+  "title": "Proxy request",
+  "description": "What a sandboxed agent sends to a credential proxy. Carries no identity and no credential: the Warrant is resolved from the mTLS run identity (PRX-R-002).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["provider", "action", "target", "idempotency_key"],
+  "properties": {
+    "provider": {
+      "description": "Which proxy surface this action belongs to.",
+      "enum": ["azure", "aws", "kubernetes", "github", "secrets"]
+    },
+    "action": {
+      "description": "The provider's own action name. Never an HTTP verb, never a CLI string. PRX-R-011.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "examples": [
+        "Microsoft.Compute/virtualMachines/delete",
+        "ec2:TerminateInstances",
+        "k8s:apps/v1/deployments/create",
+        "github:pulls/create"
+      ]
+    },
+    "target": {
+      "description": "Provider-scoped resource identifier the action applies to.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 2048
+    },
+    "parameters": {
+      "description": "Action arguments. Secret handles are permitted only in fields the classifier entry marks resolvable (PRX-R-052).",
+      "type": "object",
+      "default": {}
+    },
+    "idempotency_key": {
+      "description": "Agent-chosen. Scoped to the Warrant; replay returns the cached decision (PRX-R-013).",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._-]{8,128}$"
+    },
+    "justification": {
+      "description": "The model's own reasoning for this call. Advisory: shown on the approval card and copied into an EscalationRequest. Never an input to the policy decision.",
+      "type": "string",
+      "maxLength": 4096
+    },
+    "dry_run_hint": {
+      "description": "Agent's assertion that it expects this to be gated and wants only the provider dry-run. The proxy may ignore it; it never widens permission.",
+      "type": "boolean",
+      "default": false
+    }
+  },
+  "$defs": {
+    "secretHandle": {
+      "description": "PRX-R-050. Resolved outbound only, never returned (PRX-R-051).",
+      "type": "string",
+      "pattern": "^\\{\\{secret:[A-Za-z0-9._/-]+(#[A-Za-z0-9._-]+)?\\}\\}$",
+      "examples": [
+        "{{secret:kv-prod/db-password}}",
+        "{{secret:kv-prod/conn#password}}"
+      ]
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "provider": "azure",
+  "method": "PUT",
+  "url": "https://management.azure.com/subscriptions/8f1e0000-0000-0000-0000-000000000000/resourceGroups/rg-checkout-stg/providers/Microsoft.Compute/virtualMachines/vm-checkout-worker-01?api-version=2024-07-01",
+  "body": {
+    "location": "westeurope",
+    "properties": {
+      "hardwareProfile": {
+        "vmSize": "Standard_D4s_v5"
+      },
+      "storageProfile": {
+        "osDisk": {
+          "createOption": "FromImage",
+          "managedDisk": {
+            "storageAccountType": "Premium_LRS"
+          }
+        }
+      }
+    },
+    "tags": {
+      "warrant": "plat-2417-checkout-deploy",
+      "agent-authored": "true"
+    }
+  }
+}

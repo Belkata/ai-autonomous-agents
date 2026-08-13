@@ -1,0 +1,21 @@
+name: specs
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege by default — this repo's own §07 rule applied to itself.
+permissions:
+  contents: read
+
+jobs:
+  spec-trace:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - name: Validate specs, fixtures and MUST coverage
+        run: uv run tools/spec-trace/spec_trace.py

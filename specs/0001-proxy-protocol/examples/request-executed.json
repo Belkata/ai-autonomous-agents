@@ -1,0 +1,7 @@
+{
+  "provider": "azure",
+  "action": "Microsoft.Resources/subscriptions/resourceGroups/read",
+  "target": "/subscriptions/8f1e0000-0000-0000-0000-000000000000/resourceGroups/rg-checkout-stg",
+  "idempotency_key": "read-rg-checkout-stg-01",
+  "justification": "Confirm the resource group the ticket names already exists before drafting manifests."
+}

@@ -1,0 +1,16 @@
+{
+  "decision": "executed",
+  "correlation_id": "01JZ8Q6M4T7XN2R5V9B3K1D0AF",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "result": {
+    "id": "/subscriptions/8f1e.../resourceGroups/rg-checkout-stg",
+    "location": "westeurope",
+    "tags": {
+      "env": "stg"
+    }
+  },
+  "upstream_request_id": "3f2a1c7e-0b44-4c19-9d3e-77c2a1f5b8e0",
+  "replayed": false,
+  "masked": 0
+}

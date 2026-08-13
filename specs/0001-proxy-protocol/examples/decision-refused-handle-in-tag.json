@@ -1,0 +1,14 @@
+{
+  "decision": "refused",
+  "correlation_id": "01JZ8QDH6L8CU2P0Z4J7E1S7WX",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "reason_code": "unresolvable_handle",
+  "reason": "Secret handles resolve only in fields the action declares resolvable. 'tags.dbPassword' is readable after write, so a handle there would return the value to any subsequent read. Put the handle in the Secret's data field instead.",
+  "subject": "parameters.tags.dbPassword",
+  "repeat_count": 1,
+  "escalation": {
+    "escalatable": false,
+    "why": "this is the exfiltration path the field allowlist exists to close; approving it would defeat handles entirely."
+  }
+}

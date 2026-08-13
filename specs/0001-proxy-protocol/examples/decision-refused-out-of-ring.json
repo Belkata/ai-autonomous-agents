@@ -1,0 +1,14 @@
+{
+  "decision": "refused",
+  "correlation_id": "01JZ8QAE3H5ZR9L7W1F4B8P4TU",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "reason_code": "out_of_ring",
+  "reason": "That subscription is outside this Warrant's ring. An escalation has been filed; the run may park and resume if it is approved.",
+  "subject": "/subscriptions/11110000-0000-0000-0000-000000000000/resourceGroups/rg-payments-prod",
+  "repeat_count": 1,
+  "escalation": {
+    "escalatable": true,
+    "escalation_id": "esc_01JZ8QAE3H5ZR9L7W1F4B8P4TU"
+  }
+}

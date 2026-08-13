@@ -1,0 +1,12 @@
+{
+  "provider": "azure",
+  "action": "Microsoft.Compute/virtualMachines/write",
+  "target": "/subscriptions/8f1e0000-0000-0000-0000-000000000000/resourceGroups/rg-checkout-stg/providers/Microsoft.Compute/virtualMachines/vm-checkout-worker-01",
+  "parameters": {
+    "location": "westeurope",
+    "vmSize": "Standard_D4s_v5",
+    "osDiskType": "Premium_LRS"
+  },
+  "idempotency_key": "create-vm-checkout-worker-01",
+  "justification": "The ticket's acceptance criteria need a worker node for the queue consumer; no existing pool matches the SKU."
+}

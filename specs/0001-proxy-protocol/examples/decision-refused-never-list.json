@@ -1,0 +1,14 @@
+{
+  "decision": "refused",
+  "correlation_id": "01JZ8Q8C1F3XP7J5U9D2Z6M2RS",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "reason_code": "never_listed",
+  "reason": "Role assignments are on the never-list and cannot be granted by escalation. If the run needs a permission it does not have, request it as a Warrant revision rather than as an IAM change.",
+  "subject": "Microsoft.Authorization/roleAssignments/write",
+  "repeat_count": 1,
+  "escalation": {
+    "escalatable": false,
+    "why": "never-list entries are not escalatable by design; changing the never-list is a change to GlobalPolicy, reviewed as code."
+  }
+}

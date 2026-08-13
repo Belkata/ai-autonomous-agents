@@ -1,0 +1,158 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://warrant.dev/specs/0001/decision.schema.json",
+  "title": "Proxy decision",
+  "description": "The proxy's answer to a request. Exactly four outcomes (PRX-R-020). Every path produces one of these, including malformed input (PRX-R-030).",
+  "type": "object",
+  "required": ["decision", "correlation_id"],
+  "properties": {
+    "decision": {
+      "enum": ["executed", "pending", "refused", "error"]
+    },
+    "correlation_id": {
+      "description": "Stable across pending -> approval -> executed (PRX-R-022).",
+      "type": "string",
+      "minLength": 1
+    },
+    "policy_version": { "type": "string" },
+    "classifier_version": { "type": "string" }
+  },
+  "oneOf": [
+    { "$ref": "#/$defs/executed" },
+    { "$ref": "#/$defs/pending" },
+    { "$ref": "#/$defs/refused" },
+    { "$ref": "#/$defs/error" }
+  ],
+  "$defs": {
+    "executed": {
+      "properties": {
+        "decision": { "const": "executed" },
+        "result": {
+          "description": "Upstream response body, after masking (PRX-R-054). Never contains a resolved handle value."
+        },
+        "upstream_request_id": { "type": "string" },
+        "replayed": {
+          "description": "True when served from the idempotency cache (PRX-R-013).",
+          "type": "boolean",
+          "default": false
+        },
+        "masked": {
+          "description": "Count of masked spans in result. Non-zero emits an observation.",
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": ["decision", "result"]
+    },
+    "pending": {
+      "properties": {
+        "decision": { "const": "pending" },
+        "request_id": {
+          "description": "Opaque. Confers the right to poll status only — presenting it never executes (PRX-R-043).",
+          "type": "string"
+        },
+        "frozen_hash": { "$ref": "#/$defs/hash" },
+        "expires_at": { "type": "string", "format": "date-time" },
+        "gated_on": {
+          "description": "Which classifier axes triggered the gate.",
+          "type": "array",
+          "items": { "enum": ["destructive", "costsMoney", "dataActions"] },
+          "minItems": 1
+        },
+        "preview": {
+          "description": "Provider dry-run diff plus cost estimate. This, not the request, is what the approver sees (design doc §07).",
+          "type": "object",
+          "properties": {
+            "source": { "enum": ["az-what-if", "terraform-plan", "kubectl-dry-run", "none"] },
+            "diff": { "type": "string" },
+            "cost_estimate": {
+              "type": "object",
+              "properties": {
+                "monthly": { "type": "number" },
+                "currency": { "type": "string" },
+                "source": { "const": "infracost" }
+              }
+            }
+          },
+          "required": ["source"]
+        }
+      },
+      "required": ["decision", "request_id", "frozen_hash", "expires_at", "gated_on"]
+    },
+    "refused": {
+      "properties": {
+        "decision": { "const": "refused" },
+        "reason_code": {
+          "description": "Closed enum. Adding a value is a spec version bump (PRX-R-031).",
+          "enum": [
+            "out_of_ring",
+            "never_listed",
+            "sensitive_read",
+            "unresolvable_handle",
+            "budget_exhausted",
+            "warrant_expired",
+            "rate_limited",
+            "unclassified_action",
+            "stale_approval",
+            "malformed"
+          ]
+        },
+        "reason": {
+          "description": "Human- and model-readable. States which rule refused and, where safe, what would work instead (PRX-R-032).",
+          "type": "string",
+          "minLength": 1
+        },
+        "subject": {
+          "description": "What specifically was refused. Echoes only what the agent already supplied (PRX-R-033).",
+          "type": "string"
+        },
+        "repeat_count": {
+          "description": "Equivalent refusals so far in this run (PRX-R-035).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "escalation": { "$ref": "#/$defs/escalation" }
+      },
+      "required": ["decision", "reason_code", "reason", "escalation"]
+    },
+    "error": {
+      "description": "Something broke. Never a policy statement (PRX-R-021).",
+      "properties": {
+        "decision": { "const": "error" },
+        "upstream_status": { "type": ["integer", "null"] },
+        "retryable": { "type": "boolean" },
+        "retry_after_seconds": { "type": ["number", "null"] },
+        "message": { "type": "string" }
+      },
+      "required": ["decision", "retryable", "message"]
+    },
+    "escalation": {
+      "description": "PRX-R-036. Always present on a refusal so the agent can tell a dead end from a queue.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "escalatable": { "const": false },
+            "why": { "type": "string", "minLength": 1 }
+          },
+          "required": ["escalatable", "why"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "escalatable": { "const": true },
+            "escalation_id": { "type": "string", "minLength": 1 }
+          },
+          "required": ["escalatable", "escalation_id"]
+        }
+      ]
+    },
+    "hash": {
+      "description": "RFC 8785 canonical form, SHA-256, lowercase hex (PRX-R-041).",
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "decision": "refused",
+  "correlation_id": "01JZ8Q9D2G4YQ8K6V0E3A7N3ST",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "reason_code": "sensitive_read",
+  "reason": "Key Vault secret values are never returned. To use this secret in a manifest or a call, reference it as the handle {{secret:kv-checkout-stg/db-password}} and the proxy will resolve it at call time in fields that accept it.",
+  "subject": "Microsoft.KeyVault/vaults/secrets/getSecret",
+  "repeat_count": 1,
+  "escalation": {
+    "escalatable": false,
+    "why": "the value is never returned to an agent under any approval; the handle is the supported path."
+  }
+}
