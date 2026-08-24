@@ -272,10 +272,13 @@ never recreated, since it may have a live session attached.
 
 ## Next steps
 
-`specs/0001-proxy-protocol` is drafted — 37 requirements, JSON Schema, 12 golden fixtures.
-Open before it can move to `accepted`: the six questions in its `open-questions.md`, of which
-**Q1 (resolvable-field allowlist) blocks `0003`** because it changes the classifier entry
-shape.
+`specs/0001-proxy-protocol` is drafted, now at v0.5.0. **Q1-Q6 are resolved** — including
+Q1 (resolvable-field allowlist, resolved sink-based), which used to block `0003`. That
+dependency is gone, so `0003` is no longer waiting on anything.
+
+Still open before `accepted`: **Q7** (is `out_of_ring` a refusal or a `pending`?), **Q8**
+(may a `source: "none"` preview reach `pending` at all? — the AWS no-dry-run gap), and
+**Q9** (build the proxy's credential layer or adapt Infisical Agent Vault?).
 
 Then: `0002` (Warrant/GlobalPolicy objects) alongside `0003` (classifier), since the
 classifier needs the ring and never-list shaped. `0004` can be stubbed — refuse terminally,
