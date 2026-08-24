@@ -259,6 +259,8 @@ Bearer for `api.githubcopilot.com` — a separate host set and scheme from the P
 never merged with it. This is the "move the Copilot token into the proxy" option that
 `ai-sandbox`'s AGENTS.md had costed and deliberately left unbuilt; it is now built, and the
 invariant *no credential readable inside the agent container* is real and demonstrated.
+The alternatives, the measurements behind them, and the unresolved question of whose Copilot
+identity the sandbox should use are in `docs/model-credential-options-2026-08.md`.
 
 **Nothing is mounted from the host.** The workspace is an empty PVC the agent fills with its
 own `git clone`. Consequence to remember: `agent-instructions.md`'s workflow-file handoff

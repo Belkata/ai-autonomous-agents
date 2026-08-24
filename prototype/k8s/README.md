@@ -121,6 +121,10 @@ shared state volume, which is the thing this design avoids.
 VERIFIED end to end with real credentials: `git clone` through the proxy succeeded, and
 `opencode run -m github-copilot/claude-haiku-4.5` returned a real completion.
 
+Why Copilot and not something simpler — including why a PAT cannot work here, why GitHub
+Models was rejected despite fitting the architecture better, and the open question of whose
+Copilot identity the sandbox should use: `docs/model-credential-options-2026-08.md`.
+
 ### The `workflow` scope matters
 
 The PAT must **not** carry the `workflow` scope. GitHub refuses, server-side, to let a
@@ -168,14 +172,51 @@ but nothing that depends on containing *data* may lean on the network layer. See
   task has been run through to an opened pull request.
 - **No git identity in the pod.** No host `~/.gitconfig` is mounted, so `user.name` /
   `user.email` are unset and commits will be refused until set in the cloned repo.
-- **The workflow-file handoff is broken under Kubernetes.**
-  `ai-sandbox`'s `agent/agent-instructions.md` tells the agent that "`/workspace` is a bind
-  mount of the human's real project directory, so anything you commit is already visible to
-  them". That is **false here** — `/workspace` is a PVC with no path to the host, so a
-  withheld workflow commit dead-ends in a volume nobody reads. Needs a pull-based
-  retrieval (`git bundle` + `kubectl cp`, or a port-forwarded read-only `git daemon`), or
-  better: have the agent commit proposed workflows to a non-executing path so the change
-  stays reviewable in the PR diff.
+- **The workflow-file handoff needs a Kubernetes-appropriate channel.**
+  `ai-sandbox`'s `agent/agent-instructions.md` used to tell the agent that "`/workspace` is a
+  bind mount of the human's real project directory, so anything you commit is already visible
+  to them". That is **false here** — `/workspace` is a PVC with no path to the host, so a
+  withheld workflow commit dead-ends in a volume nobody reads. The instructions now describe
+  both runtimes, but the k8s side still has no delivery mechanism. See below.
+
+### Getting a withheld workflow change to a human
+
+The token deliberately lacks the `workflow` scope, so the agent cannot push
+`.github/workflows/*` — GitHub refuses server-side, unbypassably. That part works. The open
+question is only how the human then *gets* the change.
+
+**Recommended: keep it in the PR, at a path that cannot execute.** The agent commits the
+proposed workflow to something like `.github/workflows-proposed/deploy.yml` and pushes it
+normally. GitHub only runs files in `.github/workflows/`, so it triggers nothing, while the
+change stays in the PR diff — reviewed with the tooling built for that, attributed to the
+agent, with history and comments. The human's action becomes a one-line `git mv` commit,
+itself trivially reviewable. No new channel and no host coupling.
+
+NOT YET VERIFIED: that GitHub's refusal is scoped to `.github/workflows/` and a neighbouring
+path pushes fine. Confirm before relying on it — it needs a token *without* the `workflow`
+scope to test, which is a two-minute check.
+
+**Pair it with CODEOWNERS on `.github/workflows/` plus required review.** That is the
+unbypassable merge-time gate, and it holds with or without the token scope. Note that fork
+PRs already get a read-only token and no secrets, plus first-time-contributor approval — so
+the dangerous moment is the merge, not the PR.
+
+**Rejected: pushing to a git remote on the developer's machine.** Technically possible —
+`host.k3d.internal` resolves from the pod and there is no NetworkPolicy — but it inverts the
+trust direction. The sandbox is the untrusted component; letting it initiate writes *into*
+the developer's machine is strictly worse than letting it push to a fork, where the worst
+case is a PR someone closes. It would also need a git server on the host (sshd is off by
+default), a bare repo (pushing to a checked-out branch is refused), and an SSH key *in the
+agent* — a credential in the agent, which is the thing this design exists to prevent.
+
+Finally, it launders provenance: the human ends up pushing agent-authored CI under their own
+identity, so git blame shows a person and any "trusted contributor" CI gating applies to code
+the agent wrote.
+
+**If an out-of-band channel is ever needed anyway, invert it: the human pulls.** `git bundle`
+plus `kubectl cp`, or a port-forwarded read-only `git daemon` in the pod. No server on the
+host, no credential in the agent, no new agent capability, and the human initiates it with
+the kubectl access they already have.
 - **k8s-mcp and az-mcp are not deployed.** Deliberate — those let the agent act as a client
   of some *other* cluster, unrelated to getting a PR out of this one.
 
