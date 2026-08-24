@@ -46,7 +46,24 @@ cloud audit logs show the proxy's identity, so the proxy's own log is the author
 "which run did what" record.
 
 **Intercept at the API boundary, not the CLI.** Gating `az` is pointless — the agent will
-write Python against `management.azure.com`. The sandbox's only network route is the proxy.
+write Python against `management.azure.com`, so interception happens where the provider API
+is called, not where a CLI is invoked.
+
+**The proxy is credential custody, not a network chokepoint.** It exists so the agent can
+use a credential it never holds — the token lives in the proxy and is injected on the wire.
+It is deliberately *not* the sandbox's only egress route, and general internet access stays
+open for now: the agent needs to fetch packages, docs and source to do its job, and routing
+all of that through one component buys friction rather than safety. Verified rather than
+assumed: `HTTP_PROXY` is a convention well-behaved clients honour, not an enforcement
+boundary — `curl --noproxy '*'` from the sandbox reaches the internet directly, and no
+NetworkPolicy restricts it.
+
+What that does and does not buy: credential isolation holds regardless, because the agent
+has no token to misuse whether or not it uses the proxy. What open egress does NOT prevent
+is exfiltration — an agent can POST its context anywhere — so anything that depends on
+containing *data* must not lean on the network layer. Future additions (an artifact
+registry, a package mirror) may sit alongside the credential proxy for their own reasons;
+that is a separate decision from making egress exclusive, and does not imply it.
 
 **One global policy for v1.** Not per-ticket. The Warrant carries intent, budget, TTL,
 approvers, signature, and an advisory `guide`; a `GlobalPolicy` object does the enforcing.
@@ -63,7 +80,16 @@ selective auto-approval, needing per-agent trust and per-ticket expectation, and
 **Approve a diff, never a command.** Run the provider's dry-run (`az deployment what-if`,
 `terraform plan`, `kubectl --dry-run=server`) plus Infracost, and put *that* on the card.
 Bind approval to a frozen (hashed) request the proxy then executes — never hand an approval
-token back to the agent, or arguments change between approve and execute.
+token back to the agent, or arguments change between approve and execute. The same diff and
+cost also return to the agent synchronously on `pending` (`0001` `PRX-R-048`), not only the
+card — chosen so it can recognize and withdraw its own destructive or costly requests instead
+of always waiting on a human to catch them. `dry_run_hint` is rate-limited per run and target
+(`PRX-R-015`) so this doesn't become a free way to enumerate diffs across the ring.
+AWS has no dry-run equivalent to `what-if`/server-side `--dry-run` — CloudFormation change
+sets only cover CFN-managed resources, and per-API `DryRun` flags check permissions, not
+produce a diff. `PRX-R-048`'s `preview.source` enum has no AWS-native value, so a direct AWS
+mutation outside Terraform/OpenTofu gets `source: "none"` today. Open question: `0001`
+open-questions.md Q8.
 
 **Deny secrets, don't mask them.** Known-sensitive reads (Key Vault, storage keys, k8s
 secrets, tfstate) are refused. Masking is only a backstop for the long tail. When the agent
@@ -125,9 +151,22 @@ in §05 and §08 of the design doc.
 - agentgateway or IBM ContextForge — the data plane the proxies sit behind
 - OpenHands — the coding agent (Agent Server, headless)
 - kubernetes-sigs/agent-sandbox — Sandbox CRD, gVisor/Kata, warm pools (still pre-production)
-- LangGraph — intake conversation + run state machine, for its durable checkpointer
+- LangGraph — intake conversation + run state machine, for its durable checkpointer (persists state across restarts; no built-in crash detection, auto-resume, or concurrent-resume coordination — single-process by design, see design doc §03 "Layer choices")
 - SPIRE — run identity; OpenBao — secret broker
 - Argo CD / Atlantis-style plan-apply split for infra
+- **Evaluate before building:** Infisical Agent Vault (MIT, standalone, no Infisical
+  dependency — HTTP credential proxy + vault, injects real credentials at the network boundary
+  so the agent never sees them) as the substrate for `PRX-R-001`'s credential-holding proxy,
+  before writing that layer from scratch. See `docs/competitive-landscape-2026-08.md`.
+
+Not depending on, but worth reading when `0001`'s proxy identity layer gets built: Rossoctl
+(formerly Kagenti, repo `kagenti/kagenti`)'s `authbridge` component does SPIRE-SVID-to-scoped-
+token exchange via Keycloak in a working, deployed Envoy `ext_proc` sidecar — the closest found
+analog to "credentials live in proxies, never in the agent," on the same SPIRE dependency
+already chosen. Not a fork candidate (different-shaped problem, whole platform, not a library)
+— see `docs/kagenti-rossoctl-evaluation-2026-08.md` for the full evaluation and a naming note:
+`kagent` (dependency above), `kagenti` (repo name), and Rossoctl (what it calls itself) are
+three distinct, easily-confused projects.
 
 **Write (this is the project):**
 - `GlobalPolicy` / `Warrant` / `EscalationRequest` CRDs + controller
@@ -197,6 +236,38 @@ and the fastest thing to ship, which is exactly why it doesn't need to be first 
 edges into anything else, so building it later invalidates nothing. The proxy protocol is
 where every other component meets, so getting it wrong is a rewrite of all of them.
 
+## The k8s prototype — `prototype/k8s/`
+
+A working Kubernetes port of `ai-sandbox`'s Docker setup: one agent pod with GitHub access
+through the credential proxy, joinable by a human to steer a live session. **Runs end to end
+on k3d, verified against a real cluster.** Full detail — including four bugs found, the
+credential wiring, and the known gaps — is in `prototype/k8s/README.md`; read that before
+touching it. The things that are settled decisions rather than detail:
+
+**Steering is `opencode serve` + `opencode attach`, not a second `opencode`.** Running
+`opencode` again does not show the live session — each invocation is an independent TUI with
+its own in-process server, sharing only the session DB, so the second sees history but not
+the live session. The Docker design's assumption that session-DB persistence covered this was
+wrong. The pod runs `opencode serve` as PID 1; humans join with `attach`, ideally over
+`kubectl port-forward` from their own machine. Verified with two concurrent clients on one
+session.
+
+**The agent holds no credential at all, including the model credential.** opencode's
+`github-copilot` provider declares `env:["GITHUB_TOKEN"]` and does not validate it, so the pod
+gets `GITHUB_TOKEN=proxy-managed` and the proxy injects the real Copilot `gho_` token as a
+Bearer for `api.githubcopilot.com` — a separate host set and scheme from the PAT's Basic auth,
+never merged with it. This is the "move the Copilot token into the proxy" option that
+`ai-sandbox`'s AGENTS.md had costed and deliberately left unbuilt; it is now built, and the
+invariant *no credential readable inside the agent container* is real and demonstrated.
+
+**Nothing is mounted from the host.** The workspace is an empty PVC the agent fills with its
+own `git clone`. Consequence to remember: `agent-instructions.md`'s workflow-file handoff
+tells the agent `/workspace` is a bind mount the human can see, which is false under k8s, so
+that handoff currently dead-ends. Unfixed.
+
+**Pod names are generated** (`agent-<random>`); an existing agent is found by label and reused,
+never recreated, since it may have a live session attached.
+
 ## Next steps
 
 `specs/0001-proxy-protocol` is drafted — 37 requirements, JSON Schema, 12 golden fixtures.
@@ -212,6 +283,16 @@ Zero-spend milestone to aim at: local approval adapter → GitHub Issue → Open
 sandbox on k3d → fork PR on a public repo → free Actions CI → scratch namespace it can break
 freely → approval card → merge. Shortest spec path to a running loop is
 **0001 → 0003 → 0005 → 0007**.
+
+Nearest concrete step on the prototype: run ONE real task through to an opened PR. Clone
+through the proxy and a real model completion are both verified; the PR itself is not. Two
+things block a clean run — the pod has no git identity (`user.name`/`user.email` unset, so
+commits are refused), and the workflow-file handoff needs a k8s-appropriate channel.
+
+Before writing `0001`'s credential-holding proxy: stand up Infisical Agent Vault
+(github.com/Infisical/agent-vault, MIT, single binary + SQLite) against the k3d setup and see
+how far it gets toward PRX-R-001 as-is, rather than defaulting to building that layer from
+scratch. If it doesn't fit, that's a fast no — but it's free to check first.
 
 ## Working with this user
 

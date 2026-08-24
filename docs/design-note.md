@@ -22,6 +22,8 @@ No product ships this loop end to end. Every *component* exists and is productio
 1. **A policy layer that thinks in blast radius, not in tools.** Every runtime can allowlist a tool name. None of them classify a request by what it will actually do — destroy something, cost €400 a month, return a secret — and none of them put a rendered diff in front of a human instead of a command string.
 2. **The escalation path.** Every runtime can deny a call. None of them treat a denial as the start of a conversation — file a request, route to a human, log the exception, resume the run exactly where it stopped, hours later.
 
+> **Checked again, August 2026.** Worth re-verifying rather than assuming, given how fast this space moves: Infisical, Keycard, Auth0, Teleport, and CyberArk have all shipped or expanded "the agent never holds the credential" products this year. The closest Kubernetes-native analog, Rossoctl (formerly Kagenti — built on the same SPIRE identity primitive this design uses), has a working credential-brokering sidecar but has explicitly not shipped the synchronous hold-for-approval mechanic this design calls the escalation loop: it's Phase 3 on their own roadmap, blocked on upstream support. Full survey in `docs/competitive-landscape-2026-08.md` and `docs/kagenti-rossoctl-evaluation-2026-08.md`. The two gaps named above are still the two gaps.
+
 So: assemble the runtime from existing parts, and write the control plane that sits between the conversation and the sandbox. That control plane is your open-source project.
 
 ## 02 · What already exists, stage by stage
@@ -30,9 +32,9 @@ So: assemble the runtime from existing parts, and write the control plane that s
 | --- | --- | --- |
 | Conversational intake | A Teams bot on Azure Bot Service / M365 Agents SDK. Plumbing is solved; OpenHands ships Jira and Slack integrations but not Teams, and none of them start from a conversation. | `partial` |
 | Ticket drafting | Nothing productized. LangGraph is the right shape: one checkpointed thread per Teams conversation, `interrupt()` at the sign-off, Jira write scoped to issue creation. | `build it` |
-| Policy layer | Fragments only — kagent's `requireApproval` is per tool name, agentgateway policy is per tool call, AgentCore Policy is Cedar and AWS-only. None classify by provider action, estimate cost, or render a what-if diff for the approver. | `build it` |
+| Policy layer | Fragments only — kagent's `requireApproval` is per tool name, agentgateway policy is per tool call, AgentCore Policy is Cedar and AWS-only, Rossoctl (formerly Kagenti)'s OPA-gated HITL ladder tops out at L2 (async review) with L3 — the sync-hold-for-approval level this design needs — explicitly unbuilt, Phase 3 on their own roadmap. None classify by provider action, estimate cost, or render a what-if diff for the approver. | `build it` |
 | Sandboxed agent in k8s | OpenHands Agent Server (v1.6.0 added Kubernetes; Enterprise uses Sysbox so agents can build images), kagent `SandboxAgent` (gVisor), or `kubernetes-sigs/agent-sandbox` — a SIG-Apps `Sandbox` CRD with gVisor/Kata via `runtimeClassName`, warm pools, pause/resume. | `ready` |
-| Credential proxies | agentgateway (Rust, Linux Foundation) or IBM ContextForge as the data plane, fronting MCP servers that hold the credentials. Both do authn, audit and cost; neither ships the action-level classification or the what-if/cost card you need on top. | `partial` |
+| Credential proxies | agentgateway (Rust, Linux Foundation) or IBM ContextForge as the data plane, fronting MCP servers that hold the credentials. Both do authn, audit and cost; neither ships the action-level classification or the what-if/cost card you need on top. Infisical Agent Vault (MIT, standalone) is worth prototyping as the credential-injection layer itself; Rossoctl's `authbridge` is a working SPIRE-SVID-to-scoped-token exchange over the same identity primitive chosen below, though it gates agent-to-agent/tool traffic inside a mesh, not calls to a cloud provider. | `partial` |
 | Agent → PR | OpenHands resolver pattern (label an issue → sandbox → PR), or Claude Code / Codex driven by OpenHands as the inner agent. | `ready` |
 | Command needs approval | kagent `requireApproval` (Approve/Reject, rejection reason fed back to the model), HumanLayer (Slack/email/Teams, routing, timeouts, escalation), OpenHands confirmation policy + hooks. | `ready` |
 | Agent asks for more access | Nothing. Kubiya's JIT elevated permissions is closest, but it is human-initiated. A 2026 practitioner survey found 93% of agent projects still run on unscoped API keys. | `build it` |
@@ -56,7 +58,7 @@ flowchart TB
     W["Warrant (CR)<br/>for machines"]
     C["Warrant compiler (controller)<br/>default deny · nothing downstream can widen it"]
     N1["Namespace + RBAC<br/>one per run, TTL'd"]
-    N2["NetworkPolicy<br/>egress only to proxies, no IMDS"]
+    N2["NetworkPolicy<br/>no IMDS · egress open for now"]
     N3["Global policy<br/>identical for every run"]
     N4["Budget + TTL<br/>guide recorded for drift"]
 
@@ -89,8 +91,12 @@ The consequence worth planning for: every cloud action now appears in Activity L
 - **Runtime:** kagent as the k8s-native control plane — it already models agents, tool servers, sessions and approval as CRDs, and its BYO/A2A path means OpenHands, LangGraph and Claude Code all plug in as agents rather than forks.
 - **Sandbox:** `kubernetes-sigs/agent-sandbox` if you want to stay upstream (Sandbox CRD, gVisor/Kata, warm pools — note it is still pre-production as of April 2026), otherwise kagent `SandboxAgent` or OpenHands' own Sysbox-based sandboxes.
 - **Coding agent:** OpenHands Agent Server headless, one sandbox per run. It already knows how to clone, edit, run tests and open a PR, and it can drive Claude Code or Codex inside if you prefer a different inner loop.
-- **Enforcement:** agentgateway as the single egress, fronting the credential proxies. Every MCP tool call, every LLM call, every API call leaves through it, which is also where your audit trail and cost attribution come from for free. The global policy lives here; the per-run Warrant is policy *input*, not a separate enforcement mechanism.
-- **Orchestration:** LangGraph for the intake conversation and the run's outer state machine — specifically for its checkpointer, because a chat that pauses overnight and an escalation that waits four hours for an approver must both survive pod restarts.
+- **Enforcement:** agentgateway fronting the credential proxies. Every *privileged* call leaves through it — not because the network forces it, but because that is where the credential lives, so a call that avoids it has nothing to authenticate with. Note the consequence for the audit trail: the proxy log is a complete record of what the agent did *with credentials*, not of everything it touched. Cost attribution for model calls still lands here, since those carry a credential too. The global policy lives here; the per-run Warrant is policy *input*, not a separate enforcement mechanism.
+- **Orchestration:** LangGraph for the intake conversation and the run's outer state machine — specifically for its checkpointer, because a chat that pauses overnight and an escalation that waits four hours for an approver must both survive pod restarts. Worth being precise about what the checkpointer buys: it persists state, not crash recovery. The open-source library has no built-in crash detection, no automatic resumption, and no coordination against two processes resuming the same `thread_id` at once — it's explicitly single-process, no distributed execution or task queue. Fine for the local-adapter milestone, where there's one proxy of truth and low concurrency; if the run state machine ever needs to survive an actual crash rather than a clean pod restart, or run concurrently, that's an external supervisor/watchdog this note doesn't currently name. Independent validation of the choice itself: Rossoctl's own sandbox design doc lands on the identical mechanism — `LangGraph interrupt()` plus `A2A input_required` — for its own human-in-the-loop gating, arrived at separately.
+
+> **A reference implementation worth reading, not depending on**
+>
+> Rossoctl (formerly Kagenti, `github.com/kagenti/kagenti`)'s `authbridge` component does, in a working Envoy `ext_proc` sidecar, exactly the SVID-to-scoped-token exchange this design needs without yet specifying how it's built: it validates an inbound SVID-derived JWT, exchanges it for an audience-scoped OAuth2 token via Keycloak (RFC 8693 token exchange), and the workload holding the SVID never holds the resulting credential. Same SPIRE dependency as above, applied to the one piece of "credentials live in proxies" that has a working open-source implementation anywhere this search found. Not a dependency to add — it gates agent-to-agent and agent-to-tool traffic inside a mesh, not calls to Azure, AWS, or the Kubernetes API — but worth reading before building that exchange step from zero. See `specs/0001-proxy-protocol/open-questions.md` Q9 and `docs/kagenti-rossoctl-evaluation-2026-08.md`.
 
 ## 04 · The intake conversation
 
@@ -243,7 +249,7 @@ The agent can run anything. It just can't reach anything directly — every priv
 
 ```mermaid
 flowchart TB
-    S["Sandboxed run<br/>any command, any tool · gVisor<br/>zero credentials · no IMDS · no direct egress"]
+    S["Sandboxed run<br/>any command, any tool · gVisor<br/>zero credentials · no IMDS"]
     PX["Credential proxies<br/>global policy"]
     R["Read, in ring<br/>secrets → handles, not values"]
     M["Mutation<br/>what-if diff + cost estimate"]
@@ -258,11 +264,14 @@ flowchart TB
     PX --> D
     R --> RP
     M --> MC
+    M -.->|"same diff + cost, returned synchronously"| S
     D --> E
     E -.->|"approved → one-shot exception logged on the Warrant → run resumes from its checkpoint"| S
 ```
 
 **A denial is a message, not a crash.** The proxy returns a structured refusal — `{denied, reason, escalation_id}` — so the agent can file a request and park instead of hallucinating a workaround. That structured deny is the single most important interface in the design; a bare 403 gives the model nothing to reason about and it will try to route around you. Note what is *not* on this diagram: a path where the agent holds a credential.
+
+**The mutation diff goes to both places, not just the card.** The agent gets the same what-if diff and cost estimate the approver will see, synchronously, on the `pending` response — not a stripped-down version. A run that's about to delete the wrong thing or spend €400/mo it didn't mean to should be able to see that and withdraw the request itself, instead of always making a human catch it. The cost is that `dry_run_hint` — "run only the dry-run, I don't intend to execute" — becomes a way to pull a diff for free, so it's rate-limited per run and target rather than left as an unenforced hint.
 
 ### The escalation state machine
 
@@ -272,6 +281,10 @@ flowchart TB
 4. Approve → new Warrant revision (validated against the ceiling) → compiler re-renders RBAC/NetworkPolicy/gateway policy → run resumes with the delta injected as context.
 5. Every step appended to the Jira ticket, so the ticket ends up being the complete record of what the agent was allowed to do and who allowed it.
 
+> **Naming the levels**
+>
+> Rossoctl's own human-in-the-loop design names four levels worth borrowing as vocabulary: L0 implicit deny, L1 log-and-allow, L2 async review (a human sees it after the fact), L3 sync approval (the call blocks until a human answers). Mapped onto this design: reads inside the ring and scratch-ring mutations never reach a gate at all; drift-logged reads and PRs are L1; the mutation-approval flow above — proxy holds the frozen request, card goes out, run resumes from checkpoint on approval — is L3. The useful data point is that L3 is the one nobody has shipped: Rossoctl's own `HitlApprovalCard` UI component exists, but the live proxy-hold-and-resume wiring behind it is Phase 3 and blocked on upstream support as of this writing. That's not a reason to expect it's easy. It's a reason to expect it's worth building.
+
 ## 07 · The policy layer in practice
 
 ### Classify by action, never by verb or by binary
@@ -280,9 +293,15 @@ Two traps. The first is gating the CLI: wrap `az` and the agent writes ten lines
 
 The second is using the HTTP verb as the danger signal. ARM is POST-for-everything: `…/deallocate` tears down a VM, a PUT on a tag does nothing. Classify on **provider action name + target scope + cost** instead — `Microsoft.Compute/virtualMachines/delete`, `ec2:TerminateInstances`. Those taxonomies already separate read from write from action, and Azure flags `dataActions` separately, which is precisely the sensitive-read axis you need. You get a policy that is per-provider but not per-tool, and it survives the agent inventing a new way to make the call.
 
+The curation burden is not symmetric across providers, though. AWS publishes its own real, machine-readable taxonomy — every IAM action in the Service Authorization Reference carries an access level, `List`/`Read`/`Write`/`Tagging`/`Permissions management` — but it only tells you read from write. Nothing in it says which writes are destructive versus benign, and nothing says which cost money. Azure's `dataActions` flag gets the sensitive-read axis for free; on AWS that axis, and `destructive`/`costsMoney` both, are entirely hand-curated. Expect the AWS half of the classifier table (`0003`) to take real work no lookup table shortcuts.
+
 ### Approve a diff, not a command
 
 Never put a command on the approval card. Run the provider's own dry-run — `az deployment what-if`, `terraform plan`, `kubectl --dry-run=server` — and show the resulting diff with an Infracost estimate attached. "Creates 3 D4s_v5 in rg-checkout-stg, ~€412/mo, deletes nothing" is a decision a tired on-call engineer can make correctly at 16:40. `az vm create --size Standard_D4s_v5 …` is not; they approve it anyway, which is worse than not asking.
+
+> **AWS has no `what-if`.** Azure has ARM `what-if`, Kubernetes has server-side `--dry-run` — both preview an arbitrary API call. AWS has nothing equivalent: CloudFormation change sets only cover resources CloudFormation itself manages, and the per-API `DryRun` flag a handful of services (mostly EC2) accept just checks whether the caller is allowed to make the call — a permissions verdict, not a diff. `PRX-R-048`'s `preview.source` enum already reflects this: it has `az-what-if`, `terraform-plan`, `kubectl-dry-run` and a `none` fallback, but no AWS-native value — a direct AWS mutation outside Terraform/OpenTofu falls to `source: "none"` today, meaning no diff and no cost estimate reach either the agent or the card for exactly the class of request (destructive or costly) where that matters most. `terraform-plan` already covers AWS resources managed through IaC, so the practical fix is routing AWS-side mutation through `tofu plan` rather than allowing it as a direct imperative call the way an Azure or k8s action might be — but the spec doesn't yet say whether a `source: "none"` `pending` for a destructive AWS action should even be allowed to reach `pending`, or should refuse instead. Tracked as Q8 in `specs/0001-proxy-protocol/open-questions.md`.
+
+The same diff and cost figure go back to the agent too, synchronously, the moment the request comes back gated — not only to the card. A run that can see it's about to do something destructive or expensive can withdraw the request itself; one that can't will only find out from whichever human eventually reads the card, which wastes a review cycle on a mistake the agent would have caught. The trade is that this makes the diff itself a thing worth asking for on purpose — `dry_run_hint` says "I only want the dry-run" — so it's rate-limited per run and target rather than treated as a free look at the ring.
 
 Then bind the approval to a **frozen request**: hash the exact request object, and have the proxy execute that object itself. Never hand an approval token back to the agent — otherwise arguments can change between "approve" and "execute", and your gate is a suggestion.
 
@@ -329,7 +348,25 @@ Letting the agent run arbitrary commands is only sound if the sandbox has genuin
 
 - **No projected service account token** — `automountServiceAccountToken: false`. Otherwise the agent talks to the API server directly and your cluster proxy is decorative.
 - **No reachable IMDS.** Block `169.254.169.254` and the link-local range. This is the classic escape: one curl gets you the node's cloud identity, which is invariably more privileged than the run.
-- **Egress default-deny** to everything except the proxies. Package installs go through an internal mirror, also proxied. Without this the agent can reach `management.azure.com` the moment it finds any credential anywhere.
+- **Egress: open, deliberately, for now — this is an ACCEPTED RISK, not an oversight.** The
+  earlier position here was default-deny to everything except the proxies, with package
+  installs through an internal mirror. That was reversed: the agent needs to fetch packages,
+  docs and source to do its job, and mirroring every source it might legitimately need buys
+  friction rather than safety at this stage. The proxy is credential custody, not a network
+  chokepoint.
+
+  What is given up, stated plainly so nobody has to rediscover it: default-deny was
+  defence-in-depth for a credential the agent was never *given* but **finds** — hardcoded in
+  a repo it clones, in a CI config, in a stray env file. Credential isolation does not cover
+  that case, because the token did not come from us. Open egress also means an agent can POST
+  its context anywhere, so nothing that depends on containing *data* may lean on the network
+  layer.
+
+  Also worth knowing before relying on the old wording: `HTTP_PROXY` is a convention
+  well-behaved clients honour, not a boundary. Measured on the k3d prototype —
+  `curl --noproxy '*'` from the sandbox reached the internet directly, with no NetworkPolicy
+  in place. Revisit if an artifact registry or package mirror arrives for its own reasons;
+  adding one does not imply making egress exclusive again.
 - **No node identity worth having.** Run agent sandboxes on a node pool whose managed identity or instance profile grants nothing, so IMDS being reachable through a bug is boring rather than fatal.
 
 The sandbox still authenticates to the proxies — SPIFFE mTLS from SPIRE is the clean way, and it gives the proxy a verified run identity to bind its audit log and rate limits to. The difference from the earlier design is that this identity buys *nothing* outside the proxy: there is no exchange into an Azure or AWS token, so a leaked sandbox is worth exactly one authenticated conversation with a policy engine.
@@ -458,7 +495,7 @@ One global policy makes this shorter than it was. Nothing needs a per-ticket per
 Teams bot + LangGraph intake, reading the estate through a first read-only proxy and an inventory index, filing a Jira issue. Separately: OpenHands turning that issue into a fork PR, verifying in-sandbox against the runner image.
 
 **Weeks 3–6 — Take the credentials away**  
-Cloud and git proxies holding the tokens; sandbox stripped of SA token, IMDS and egress. Scratch ring so the agent can still apply and observe. Everything auto-approved — the goal is that nothing breaks when the agent stops holding keys.
+Cloud and git proxies holding the tokens; sandbox stripped of SA token and IMDS (egress stays open — see the sandbox hygiene section). Scratch ring so the agent can still apply and observe. Everything auto-approved — the goal is that nothing breaks when the agent stops holding keys.
 
 **Weeks 7–10 — Make approval real**  
 Mutations gated: what-if diff + cost on an Adaptive Card, Entra group check, frozen request executed by the proxy. Secret handles instead of masking. Plan/apply split for infra.
@@ -500,7 +537,11 @@ This doubles as the contributor setup: someone should be able to clone the repo 
 
 ## 10 · What the open-source project should and shouldn't be
 
-The crowded lanes are agent runtimes, MCP gateways, and coding agents — kagent, agentgateway, ContextForge, OpenHands, agent-sandbox all have real momentum and funding behind them. Competing there is a losing trade. The empty lane is *the authorization lifecycle of an agent run*.
+The crowded lanes are agent runtimes, MCP gateways, and coding agents — kagent, agentgateway, ContextForge, OpenHands, agent-sandbox all have real momentum and funding behind them. Competing there is a losing trade. *The authorization lifecycle of an agent run* is closer to empty than crowded, but not literally empty, and it's worth being precise about the near misses rather than claiming a clean field: Keycard already brokers scoped tokens and escalates destructive calls (`project.delete`) to a human, just not for cloud-provider actions with a rendered diff; Infisical brokers credentials cleanly with no classifier above it; Rossoctl brokers agent-to-agent identity on the same SPIRE primitive this design uses, one layer over from where this design gates. None of them pair a provider-action classifier with a diff-and-cost approval card bound to a frozen request — that combination, not credential brokering by itself, is the actual lane.
+
+> **A naming note, since the field is this close**
+>
+> `kagent` (a dependency of this project), `kagenti` (a GitHub repo name), and Rossoctl (what that repo now calls itself) are three distinct projects that will be conflated by anyone skimming quickly. Say "Rossoctl (repo: `kagenti/kagenti`)" on first mention in the README and anywhere else this gets compared publicly — the confusion is free to prevent and expensive to untangle after a reader has already formed the wrong idea.
 
 - **Ship:** the GlobalPolicy/Warrant/EscalationRequest CRDs, the action classifier (provider action name → destructive? costs money? sensitive read?), the what-if-plus-cost approval card, secret handles, the escalation loop, and the audit and drift export. A controller, a policy pack, and two channel adapters — small enough for one maintainer to hold.
 - **Depend on:** agentgateway or ContextForge as the data plane, agent-sandbox or kagent for isolation, OpenHands or Claude Code for the work, SPIRE for run identity, Infracost and the providers' own what-if APIs for the diffs.
@@ -531,3 +572,4 @@ Sources
 - [O365 connector retirement](https://devblogs.microsoft.com/microsoft365dev/retirement-of-office-365-connectors-within-microsoft-teams/) · [Teams approval bots](https://learn.microsoft.com/en-us/answers/questions/5705984/custom-microsoft-teams-bot-for-approval-workflows)
 - [IETF: attenuating authorization tokens for agentic delegation](https://datatracker.ietf.org/doc/draft-niyikiza-oauth-attenuating-agent-tokens/) · [SPIFFE for agents](https://riptides.io/blog/how-to-deliver-spiffe-identity-to-ai-agents/)
 - [Least privilege for kubectl/terraform agents](https://kodekloud.com/blog/least-privilege-for-ai-agents-securing-kubectl-terraform-and-cloud-clis/) · [Kubiya JIT permissions](https://www.kubiya.ai/blog/internal-developer-platforms-and-conversational-ai) · [HumanLayer](https://ycombinator.com/launches/M8e-humanlayer-human-in-the-loop-for-ai-agents-and-beyond)
+- [Infisical Agent Vault](https://github.com/Infisical/agent-vault) · [Keycard](https://www.keycard.ai/) · [Rossoctl / Kagenti](https://github.com/kagenti/kagenti) · [Rossoctl AuthBridge](https://github.com/rossoctl/cortex/tree/main/authbridge) — full landscape survey in `docs/competitive-landscape-2026-08.md` and `docs/kagenti-rossoctl-evaluation-2026-08.md`
