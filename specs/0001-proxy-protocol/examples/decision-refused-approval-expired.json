@@ -1,0 +1,14 @@
+{
+  "decision": "refused",
+  "correlation_id": "01JZ8Q7B9E2WM6H4T8C0Y5N1PQ",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "reason_code": "approval_expired",
+  "reason": "This request's approval window closed at 2026-08-13T13:14:22Z with no decision from an approver. The Warrant that issued it is still alive. Submit the action again to open a fresh approval window.",
+  "subject": "/subscriptions/8f1e0000-0000-0000-0000-000000000000/resourceGroups/rg-checkout-stg/providers/Microsoft.Compute/virtualMachines/vm-checkout-worker-01",
+  "repeat_count": 1,
+  "escalation": {
+    "escalatable": false,
+    "why": "an expired approval window is not queued for later action; the run must resubmit the request to get a new one."
+  }
+}

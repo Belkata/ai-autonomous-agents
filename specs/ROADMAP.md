@@ -30,7 +30,7 @@ all at once (see `README.md`, "Unit of specification").
 | 0004 | `escalation` | `EscalationRequest` object, state machine, pause/resume, timeout auto-deny, ticket append | not written |
 | 0005 | `approval-binding` | What an approval is bound to, staleness, single-use, channel-adapter contract (local CLI first) | not written |
 | 0006 | `ci-hygiene-scan` | Static analysis of workflow/Argo/Atlantis config; finding taxonomy; conformance corpus of repos | not written |
-| 0007 | `sandbox-contract` | The four hygiene invariants (no SA token, no IMDS, egress default-deny, worthless node identity) as checkable assertions | not written |
+| 0007 | `sandbox-contract` | The hygiene invariants (no SA token, no IMDS, worthless node identity) as checkable assertions. **Egress default-deny was dropped as a v1 invariant** — egress is deliberately open, see `docs/design-note.md`. OPEN: whether `0007` should still specify it as an opt-in//future assertion, or drop it entirely | not written |
 | 0008 | `scratch-ring` | Per-run namespace + resource group, ungated mutation, TTL, cost ceiling, teardown | not written |
 | 0009 | `intake-agent` | Draft-first conversation contract, cached inventory interface, the single write, sign-off transaction | not written |
 
@@ -59,3 +59,21 @@ Mapped to specs, the shortest path that produces a running loop is
 needs the ring and never-list to be shaped. `0004` can be stubbed (refuse terminally, no
 escalation) until the rest of the loop runs end to end — the refusal envelope in `0001`
 already reserves the field.
+
+## Known caveats affecting specs not yet written
+
+- **`0005` (approval-binding)** assumes something exists to bind an approval to — a rendered
+  diff. That holds for Azure (`what-if`) and Kubernetes (server-side dry-run) but not for AWS,
+  which has no generic preview primitive: CloudFormation change sets cover only
+  CloudFormation-managed resources, and the per-API `DryRun` flag a few services accept checks
+  permissions, not producing a diff. Decide before `0005` is drafted whether a direct,
+  non-IaC AWS mutation is in scope at all, or whether AWS-side mutation must route through
+  `tofu plan`/`terraform plan` to have anything to put on the card. Tracked as Q8 in
+  `0001-proxy-protocol/open-questions.md`; rationale in `docs/design-note.md` §07.
+- **`0009` (intake-agent)** leans on LangGraph's checkpointer for "survives pod restarts,"
+  which is accurate for state persistence and is not the same as crash recovery — the
+  open-source library has no built-in failure detection, no automatic resumption, and no
+  coordination against two processes resuming the same thread. Fine for the local-adapter
+  milestone; if `0009` ever needs real crash recovery rather than a clean restart, that needs
+  a supervisor this project doesn't currently name as a dependency. See `docs/design-note.md`
+  §03, "Layer choices."

@@ -1,0 +1,11 @@
+{
+  "decision": "error",
+  "correlation_id": "01JZ8QHT2R4YN6M0B8K3D7S1WX",
+  "policy_version": "platform-nonprod@7",
+  "classifier_version": "actions@2026.08.1",
+  "class": "upstream",
+  "upstream_status": null,
+  "retryable": true,
+  "retry_after_seconds": 3300,
+  "message": "dry_run_hint rate limit exceeded for this target (6 requests within the last hour). This is proxy-side throttling, not a policy denial; retry after the window."
+}

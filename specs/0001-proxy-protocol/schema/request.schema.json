@@ -45,7 +45,7 @@
       "maxLength": 4096
     },
     "dry_run_hint": {
-      "description": "Agent's assertion that it expects this to be gated and wants only the provider dry-run. The proxy may ignore it; it never widens permission.",
+      "description": "Agent's assertion that it expects this to be gated and wants only the provider dry-run. The proxy may ignore it; it never widens permission. Rate-limited per (run identity, target) since the full diff and cost estimate return to the agent on every pending decision (PRX-R-015, PRX-R-048).",
       "type": "boolean",
       "default": false
     }

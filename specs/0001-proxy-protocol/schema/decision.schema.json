@@ -105,7 +105,7 @@
           "minItems": 1
         },
         "preview": {
-          "description": "Provider dry-run diff plus cost estimate. This, not the request, is what the approver sees (design doc §07).",
+          "description": "Provider dry-run diff plus cost estimate. Returned to the agent as part of this decision object, and separately to the approver on the card (PRX-R-048; design doc §06-07) — full visibility was chosen so the agent can recognize and withdraw its own destructive or costly requests before a human reviews the card.",
           "type": "object",
           "properties": {
             "source": {
@@ -144,7 +144,8 @@
         "request_id",
         "frozen_hash",
         "expires_at",
-        "gated_on"
+        "gated_on",
+        "preview"
       ]
     },
     "refused": {
@@ -153,12 +154,13 @@
           "const": "refused"
         },
         "reason_code": {
-          "description": "Closed enum of four. Adding a value is a spec version bump (PRX-R-031).",
+          "description": "Closed enum of five. Adding a value is a spec version bump (PRX-R-031).",
           "enum": [
             "never_listed",
             "out_of_ring",
             "handle_denied",
-            "warrant_dead"
+            "warrant_dead",
+            "approval_expired"
           ]
         },
         "reason": {
