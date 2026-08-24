@@ -1,0 +1,146 @@
+# Agent workload, ported from sandbox.sh's `cmd_start` (Docker) to a bare
+# Pod — deliberately a Pod, not a Deployment: the whole point is a stable,
+# predictable name for `kubectl exec`, matching how sandbox.sh's persistent
+# container + `docker exec` attach already works. A Deployment would give
+# auto-restart at the cost of the pod name changing underneath you.
+#
+# Templated with envsubst by k8s/up.sh (AGENT_POD_NAME, AGENT_ID). The pod
+# name is GENERATED (agent-<random>), not derived from a project: nothing is
+# mounted from the host, so there is no project for a pod to belong to. up.sh
+# finds an existing agent by LABEL and reuses it rather than recreating it,
+# since it may have a live opencode session attached — same "warn, never
+# recreate" reasoning as sandbox.sh.
+# Per-agent: a new agent gets a clean, empty workspace to clone into.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: workspace-${AGENT_ID}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 2Gi
+---
+# NOT per-agent — one fixed name shared by every agent pod, deliberately.
+#
+# This holds opencode's session DB and auth.json (the MODEL credential). Since
+# the pod name is now generated, keying this to the pod would mean a brand new,
+# empty state volume every time a pod is created — and therefore re-running
+# `opencode auth login` before the agent could do anything at all. Sharing it
+# also matches the Docker setup's single `ai-sandbox-opencode-state` volume,
+# which is a decision already argued out there: one opencode.db covering all
+# sessions, the way opencode works natively.
+#
+# ReadWriteOnce is a real constraint if several agent pods run at once: they
+# must land on the SAME NODE to share this. True on single-node k3d, a
+# landmine on a multi-node cluster — revisit with RWX before that matters.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: opencode-state
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 256Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${AGENT_POD_NAME}
+  labels:
+    # up.sh finds the agent by this label, since the name is generated.
+    app: agent
+    agent-id: ${AGENT_ID}
+spec:
+  containers:
+    - name: agent
+      image: ai-sandbox-agent:latest
+      imagePullPolicy: IfNotPresent
+      # Overrides the image's default CMD (["opencode"]). This replaces an
+      # earlier `sleep infinity` + "just exec opencode again" approach, which
+      # did NOT do what the design needed — see below.
+      #
+      # WHY A SERVER AND NOT `sleep infinity`: the requirement is that a human
+      # can `kubectl exec` in to STEER an in-progress session, or just watch
+      # it. Running `opencode` a second time does not do that. Each plain
+      # `opencode` invocation is an independent TUI with its own in-process
+      # server; two of them share only the SQLite session DB, so the second
+      # one sees the first's session HISTORY but never its LIVE session. That
+      # is resume-after-the-fact, not steering.
+      #
+      # opencode's actual multi-client mechanism is a long-lived server plus
+      # thin attach clients, so the pod runs the server as its main process
+      # and every human joins with `opencode attach`. VERIFIED in-cluster:
+      # two concurrent `opencode attach --session <id>` clients against this
+      # one server both stayed live on the SAME session with no lock
+      # contention and no "session busy" error.
+      #
+      # --hostname 127.0.0.1 is a security boundary, not a default. The
+      # server is UNAUTHENTICATED unless OPENCODE_SERVER_PASSWORD is set (it
+      # says so on startup). On loopback it is reachable only through
+      # `kubectl exec` into this pod, which is already an authorization
+      # decision made by the cluster. Binding 0.0.0.0 would expose an
+      # unauthenticated agent-control API to every pod in the cluster.
+      args: ["opencode", "serve", "--port", "4096", "--hostname", "127.0.0.1"]
+      # The image's WORKDIR is /home/agent, and opencode roots a new session at
+      # the SERVER's working directory — so without this every session created
+      # through `opencode attach` would be rooted in the agent's home instead of
+      # the workspace it is supposed to be working in. Verified: /proc/1/cwd was
+      # /home/agent before this line existed.
+      workingDir: /workspace
+      env:
+        - name: HTTP_PROXY
+          value: "http://ai-sandbox-proxy:8080"
+        - name: HTTPS_PROXY
+          value: "http://ai-sandbox-proxy:8080"
+        - name: NO_PROXY
+          value: "localhost,127.0.0.1"
+        # Placeholder only — see ../proxy/inject_github_token.py. The real
+        # token never reaches this pod under any name.
+        - name: GH_TOKEN
+          value: "proxy-managed"
+        # MODEL credential placeholder, and the same trick as GH_TOKEN above:
+        # opencode's built-in github-copilot provider declares
+        # env:["GITHUB_TOKEN"], and it does NOT validate the value. Verified
+        # against this pinned opencode (1.18.16): GITHUB_TOKEN=proxy-managed
+        # takes `opencode models` from 8 entries to 41, including the
+        # github-copilot/* models. So the provider loads here on a string that
+        # is worthless anywhere else, and the proxy substitutes the real
+        # Copilot token on the wire for api.githubcopilot.com.
+        #
+        # This means NO auth.json is ever written with a real token, which is
+        # a stronger position than mounting a read-only placeholder over one:
+        # there is no real credential on the shared state PVC to leak, and
+        # nothing to write-protect.
+        #
+        # HISTORY, so nobody "fixes" this back: AGENTS.md records GITHUB_TOKEN
+        # being REMOVED from run.sh/sandbox.sh precisely because it made
+        # opencode report a Copilot credential that was never validated. That
+        # was a bug when the value was accidental and no proxy rule existed.
+        # Here it is deliberate and paired with COPILOT_HOSTS in the proxy.
+        # Removing it silently disables the agent's model access.
+        - name: GITHUB_TOKEN
+          value: "proxy-managed"
+      volumeMounts:
+        - name: workspace
+          mountPath: /workspace
+        - name: opencode-state
+          mountPath: /home/agent/.local/share/opencode
+        - name: mitm-ca
+          mountPath: /usr/local/share/ca-certificates/mitm-proxy-ca.crt
+          subPath: mitm-proxy-ca.crt
+          readOnly: true
+      resources:
+        limits:
+          memory: 2Gi
+  volumes:
+    - name: workspace
+      persistentVolumeClaim:
+        claimName: workspace-${AGENT_ID}
+    - name: opencode-state
+      persistentVolumeClaim:
+        claimName: opencode-state
+    - name: mitm-ca
+      secret:
+        secretName: mitm-ca

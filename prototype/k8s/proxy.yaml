@@ -1,0 +1,101 @@
+# Credential-injection proxy, ported from ../proxy/ (Docker) to a Deployment.
+# Same image, same design: this is the only place the real GitHub token
+# ever lives (proxy/inject_github_token.py). Nothing here changes that.
+#
+# The PVC is load-bearing, not an optimization: mitmproxy generates its own
+# self-signed CA into ~/.mitmproxy on first start. k8s/up.sh extracts that
+# CA and publishes it as the `mitm-ca` Secret every other pod trusts. If
+# this pod restarted without persisting ~/.mitmproxy, it would mint a NEW
+# CA and silently break TLS for every other pod until someone re-ran up.sh.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: proxy-mitm-state
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 64Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: proxy
+  labels:
+    app: proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: proxy
+  template:
+    metadata:
+      labels:
+        app: proxy
+    spec:
+      # The mitmproxy image runs as its own non-root user; the PVC mount
+      # otherwise lands root-owned and unwritable. Same 0777-via-initContainer
+      # trick entrypoint.sh already uses for /share, for the same reason:
+      # sidesteps needing to know the image's exact uid across rebuilds.
+      initContainers:
+        - name: init-mitm-state
+          image: busybox:1.36
+          command: ["sh", "-c", "chmod 0777 /home/mitmproxy/.mitmproxy"]
+          volumeMounts:
+            - name: mitm-state
+              mountPath: /home/mitmproxy/.mitmproxy
+      containers:
+        - name: proxy
+          image: ai-sandbox-proxy:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: GH_TOKEN_REAL
+              valueFrom:
+                secretKeyRef:
+                  name: github-token-real
+                  key: token
+            # The MODEL credential — a GitHub Copilot `gho_` OAuth token, a
+            # different identity from the PAT above. optional: true is
+            # deliberate: without it the proxy still starts and GitHub traffic
+            # works exactly as before, and Copilot calls fail visibly with a
+            # plain auth error rather than this pod refusing to schedule.
+            #
+            # This is what keeps the model credential out of the agent pod.
+            # The agent gets GITHUB_TOKEN=proxy-managed instead, which is
+            # enough for opencode to offer the github-copilot provider
+            # (verified: a placeholder string enables it and lists 41 models —
+            # opencode does not validate the credential), while the only real
+            # token lives here.
+            - name: COPILOT_TOKEN_REAL
+              valueFrom:
+                secretKeyRef:
+                  name: copilot-token-real
+                  key: token
+                  optional: true
+          volumeMounts:
+            - name: mitm-state
+              mountPath: /home/mitmproxy/.mitmproxy
+          resources:
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: mitm-state
+          persistentVolumeClaim:
+            claimName: proxy-mitm-state
+---
+# Named to match the hostname baked into agent/container-opencode.json and
+# ../lib/gh-token.sh's Docker-network naming convention (ai-sandbox-proxy) —
+# HTTP_PROXY is passed as a plain env var in agent-pod.yaml.tmpl, but keeping
+# the same name avoids any drift between the two deployment modes.
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-sandbox-proxy
+spec:
+  selector:
+    app: proxy
+  ports:
+    - port: 8080
+      targetPort: 8080

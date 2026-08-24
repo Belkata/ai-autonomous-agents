@@ -1,0 +1,67 @@
+# GitHub MCP bridge, ported from ../github-mcp/ (Docker) unchanged. Routes
+# through the `proxy` Service exactly like the agent pod does — see
+# ../github-mcp/entrypoint.sh (trusts the mitm-ca Secret the same way) and
+# ../github-mcp/Dockerfile's comment on why --stateful matters (a stateless
+# gateway leaks two processes per MCP call).
+#
+# Service name is NOT cosmetic: agent/container-opencode.json has
+# `http://ai-sandbox-github-mcp:8091/mcp` baked into the image at build
+# time (it is not env-parameterized), so this Service must be named exactly
+# ai-sandbox-github-mcp for the agent pod's DNS lookup to resolve — same
+# name sandbox.sh gives the Docker container for the same reason.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ai-sandbox-github-mcp
+  labels:
+    app: github-mcp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: github-mcp
+  template:
+    metadata:
+      labels:
+        app: github-mcp
+    spec:
+      containers:
+        - name: github-mcp
+          image: ai-sandbox-github-mcp:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8091
+          env:
+            - name: HTTP_PROXY
+              value: "http://ai-sandbox-proxy:8080"
+            - name: HTTPS_PROXY
+              value: "http://ai-sandbox-proxy:8080"
+            - name: NO_PROXY
+              value: "localhost,127.0.0.1"
+            # Same harmless placeholder the agent pod gets — the real token
+            # is injected on the wire by the proxy, never held here.
+            - name: GITHUB_PERSONAL_ACCESS_TOKEN
+              value: "proxy-managed"
+          volumeMounts:
+            - name: mitm-ca
+              mountPath: /usr/local/share/ca-certificates/mitm-proxy-ca.crt
+              subPath: mitm-proxy-ca.crt
+              readOnly: true
+          resources:
+            limits:
+              memory: 256Mi
+      volumes:
+        - name: mitm-ca
+          secret:
+            secretName: mitm-ca
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-sandbox-github-mcp
+spec:
+  selector:
+    app: github-mcp
+  ports:
+    - port: 8091
+      targetPort: 8091
